@@ -69,3 +69,4 @@ docker-compose.yml
 # Assignment PDFs (not deliverables)
 # --------------------------------------------------
 *.pdf
+!docs/Langfuse_Tracing_Log_Build3.pdf
