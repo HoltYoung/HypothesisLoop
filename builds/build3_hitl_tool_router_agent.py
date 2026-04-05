@@ -609,12 +609,12 @@ def build_toolplan_chain(
 ):
     """Pick one tool + args ONLY (JSON)."""
     llm = ChatOpenAI(model=model, temperature=temperature, streaming=stream)
-    # allow_str = format_capability_hints(allowed_tools, tool_descriptions)
+    allow_str = format_capability_hints(allowed_tools, tool_descriptions)
 
-    system_text = dedent("""
-    You are a routing assistant. You pick the single BEST tool to satisfy 
+    system_text = dedent(f"""
+    You are a routing assistant. You pick the single BEST tool to satisfy
     a user request from an allow-list of tools.
-    
+
     You see:
     - Dataset schema (columns + dtypes)
     - Allow-list tools + tool signatures
@@ -652,7 +652,7 @@ def build_toolplan_chain(
 
     prompt = ChatPromptTemplate.from_messages(
         [
-            ("system", system_text),
+            SystemMessage(content=system_text),  # literal text, not templated
             (
                 "human",
                 "Dataset schema:\n{schema_text}\n\nUser request:\n{user_request}\n",
