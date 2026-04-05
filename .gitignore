@@ -70,3 +70,8 @@ docker-compose.yml
 # --------------------------------------------------
 *.pdf
 !docs/Langfuse_Tracing_Log_Build3.pdf
+
+# --------------------------------------------------
+# Personal instruction files
+# --------------------------------------------------
+instructions/
