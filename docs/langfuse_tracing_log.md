@@ -24,7 +24,6 @@ We tested all CLI commands (`suggest`, `ask`, `tool`, `code`) with multiple prom
 | # | Prompt | Outcome | Notes |
 |---|--------|---------|-------|
 | 1 | `suggest what research questions can I explore about income inequality` | Pass | Returned structured research questions with outcomes, predictors, and suggested analysis types. Also provided clarifying follow-up questions. |
-| 2 | `suggest what are the key demographic predictors of income in this dataset` | Pass | Identified age, education, occupation, and other relevant predictors with suggested analyses. |
 
 ### ask command (router decides tool vs codegen)
 
