@@ -70,8 +70,14 @@ docker-compose.yml
 # --------------------------------------------------
 *.pdf
 !docs/Langfuse_Tracing_Log_Build3.pdf
+!docs/Langfuse_Tracing_Log_Build4.pdf
 
 # --------------------------------------------------
 # Personal instruction files
 # --------------------------------------------------
 instructions/
+
+# --------------------------------------------------
+# Local tooling / agent state
+# --------------------------------------------------
+.claude/
