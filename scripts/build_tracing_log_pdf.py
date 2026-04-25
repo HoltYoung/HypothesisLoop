@@ -230,83 +230,126 @@ def build_story(styles):
     # ---- Section 3: Errors Encountered & Resolutions ----
     story.append(Paragraph("3. Errors Encountered &amp; Resolutions", styles["h1"]))
 
-    story.append(Paragraph("Error 1: src package not importable when running scripts", styles["h2"]))
+    story.append(Paragraph("Error 1: Python could not find our project code", styles["h2"]))
     story.append(
         Paragraph(
-            "<b>Problem:</b> Running <font face='Courier'>python scripts/build_rag_index.py</font> from the "
-            "project root raised <font face='Courier'>ModuleNotFoundError: No module named 'src'</font>.",
+            "<b>What happened.</b> The very first time we tried to build the RAG index by running "
+            "<font face='Courier'>python scripts/build_rag_index.py</font> from the project folder, it "
+            "crashed immediately with the message <font face='Courier'>ModuleNotFoundError: No module named 'src'</font>. "
+            "Our project keeps all the shared helper code (data readers, the FAISS utilities, etc.) in a "
+            "folder called <font face='Courier'>src/</font>, and the build script needs to import from it.",
             styles["body"],
         )
     )
     story.append(
         Paragraph(
-            "<b>Root Cause:</b> The teacher's reference script sets "
-            "<font face='Courier'>PROJECT_ROOT = Path(__file__).resolve().parents[1]</font> but never "
-            "prepends it to <font face='Courier'>sys.path</font>. Python's default search path only "
-            "includes the directory of the invoked script, which is <font face='Courier'>scripts/</font>, "
-            "not the project root.",
+            "<b>Why.</b> When you launch a Python script, Python automatically searches for imports in "
+            "the folder where the script itself lives — and only that folder, plus the standard library. "
+            "Our build script lives in <font face='Courier'>scripts/</font>, so Python was looking inside "
+            "<font face='Courier'>scripts/</font> for an <font face='Courier'>src</font> package. But "
+            "<font face='Courier'>src/</font> is one level up at the project root, so Python had no way "
+            "to see it. The teacher's script does compute the project root in a variable, but it never "
+            "actually adds that path to Python's import search list, so the variable is unused for "
+            "import purposes.",
             styles["body"],
         )
     )
     story.append(
         Paragraph(
-            "<b>Resolution:</b> Invoke the scripts with "
-            "<font face='Courier'>PYTHONPATH=. python scripts/build_rag_index.py</font>. Documented in the "
-            "README so graders and teammates do not hit the same wall.",
-            styles["body"],
-        )
-    )
-
-    story.append(Paragraph("Error 2: OpenAI insufficient_quota despite a working key", styles["h2"]))
-    story.append(
-        Paragraph(
-            "<b>Problem:</b> The first index build died with "
-            "<font face='Courier'>openai.RateLimitError: 429 insufficient_quota</font> even though the "
-            "<font face='Courier'>.env</font> held a known-working key.",
-            styles["body"],
-        )
-    )
-    story.append(
-        Paragraph(
-            "<b>Root Cause:</b> A stale <font face='Courier'>OPENAI_API_KEY</font> was set in the "
-            "Windows user environment. The teacher's reference code calls "
-            "<font face='Courier'>load_dotenv(PROJECT_ROOT / '.env')</font>, which does not overwrite "
-            "environment variables that are already set. The expired shell key therefore shadowed "
-            "the working <font face='Courier'>.env</font> key.",
-            styles["body"],
-        )
-    )
-    story.append(
-        Paragraph(
-            "<b>Resolution:</b> Changed both <font face='Courier'>scripts/build_rag_index.py</font> and "
-            "<font face='Courier'>builds/build4_rag_router_agent.py</font> to call "
-            "<font face='Courier'>load_dotenv(..., override=True)</font> so the project <font face='Courier'>.env</font> "
-            "always wins. This is the same fix we applied in Build 3.",
+            "<b>How we fixed it.</b> We started invoking the script with the prefix "
+            "<font face='Courier'>PYTHONPATH=.</font> — that one extra piece tells Python \"also look in "
+            "the current folder (the project root) when resolving imports.\" The full command becomes "
+            "<font face='Courier'>PYTHONPATH=. python scripts/build_rag_index.py</font>. We did not "
+            "change the teacher's reference script for this — we just documented the right invocation "
+            "in the README so any grader or teammate runs it correctly the first time.",
             styles["body"],
         )
     )
 
-    story.append(Paragraph("Error 3: Two-step approval confusion for codegen path", styles["h2"]))
+    story.append(Paragraph("Error 2: OpenAI rejected our requests even though our key was valid", styles["h2"]))
     story.append(
         Paragraph(
-            "<b>Problem:</b> During an end-to-end smoke test, piping two "
-            "<font face='Courier'>y</font> answers to the codegen path (expecting auto-execute after "
-            "approval) produced \"Unrecognized command\" at the REPL.",
+            "<b>What happened.</b> Once Python could find <font face='Courier'>src/</font>, the build "
+            "script reached the embedding step and immediately died with "
+            "<font face='Courier'>openai.RateLimitError: 429 insufficient_quota</font>. That message "
+            "normally means the OpenAI account is out of credits — but ours was fine, and the API key "
+            "in our project's <font face='Courier'>.env</font> file was tested and working.",
             styles["body"],
         )
     )
     story.append(
         Paragraph(
-            "<b>Root Cause:</b> After <b>Approve and save this code? (y/n)</b>, the REPL does not auto-run "
-            "the saved script. The user must type the literal command <font face='Courier'>run</font>. "
-            "The second <font face='Courier'>y</font> was therefore parsed as an invalid command.",
+            "<b>Why.</b> An API key is the password the agent uses to prove to OpenAI it is allowed to "
+            "make requests. We keep ours in a file called <font face='Courier'>.env</font> at the project "
+            "root, which Python loads using a library called <font face='Courier'>python-dotenv</font>. "
+            "Separately, Windows has its own system-wide environment variables — values that any program "
+            "on the computer can read. Holt's machine had an old, expired OpenAI key sitting in his "
+            "Windows user environment from months ago. Two keys, same name "
+            "(<font face='Courier'>OPENAI_API_KEY</font>), different values: one valid in the project's "
+            "<font face='Courier'>.env</font>, one expired in the operating system.",
             styles["body"],
         )
     )
     story.append(
         Paragraph(
-            "<b>Resolution:</b> Documented the approve-then-<font face='Courier'>run</font> two-step in "
-            "the README. Not a bug in the agent itself; this is the intended HITL ergonomic.",
+            "When the agent started, <font face='Courier'>python-dotenv</font> opened the "
+            "<font face='Courier'>.env</font> file and noticed that <font face='Courier'>OPENAI_API_KEY</font> "
+            "already existed in the operating system environment (the expired one). By default the "
+            "library is conservative: if a variable is already set, it does not overwrite it — it assumes "
+            "the existing value is intentional. So the project's good key was silently ignored and the "
+            "expired one was used. OpenAI received requests signed with the dead key and answered with the "
+            "<font face='Courier'>insufficient_quota</font> error, which made the underlying problem look "
+            "like a billing issue instead of the key-collision it actually was.",
+            styles["body"],
+        )
+    )
+    story.append(
+        Paragraph(
+            "<b>How we fixed it.</b> We changed the two places in our codebase that load the "
+            "<font face='Courier'>.env</font> file — <font face='Courier'>scripts/build_rag_index.py</font> "
+            "and <font face='Courier'>builds/build4_rag_router_agent.py</font> — from "
+            "<font face='Courier'>load_dotenv(...)</font> to "
+            "<font face='Courier'>load_dotenv(..., override=True)</font>. The added "
+            "<font face='Courier'>override=True</font> tells the library: \"always treat the value in "
+            "<font face='Courier'>.env</font> as the source of truth, even if the same variable already "
+            "exists in the system environment.\" After that one-word change the project's key wins every "
+            "time, and the embedding step ran cleanly. This is the same fix we applied during Build 3 "
+            "for the same root cause.",
+            styles["body"],
+        )
+    )
+
+    story.append(Paragraph("Error 3: We assumed approving generated code would auto-run it", styles["h2"]))
+    story.append(
+        Paragraph(
+            "<b>What happened.</b> While testing the code-generation path, we triggered a query that the "
+            "router classified as codegen, the model produced a script, and the agent asked "
+            "<b>Approve and save this code? (y/n)</b>. We answered <font face='Courier'>y</font>, "
+            "expecting the script to immediately execute. Instead the agent saved the script to disk and "
+            "went back to the <font face='Courier'>&gt;</font> prompt waiting for our next command. Our "
+            "follow-up <font face='Courier'>y</font> got rejected as <i>Unrecognized command</i>.",
+            styles["body"],
+        )
+    )
+    story.append(
+        Paragraph(
+            "<b>Why.</b> This is the agent's HITL design working as intended, not a defect. The "
+            "approve-and-save step is treated as a separate human checkpoint from the run-the-code step. "
+            "After approval the user is supposed to inspect the saved file (located under "
+            "<font face='Courier'>reports/session_&lt;id&gt;/agent_generated_analysis.py</font>) and only "
+            "then issue the literal command <font face='Courier'>run</font>, which triggers a final "
+            "<i>Execute &lt;script&gt; now? (y/n)</i> prompt before the subprocess actually fires. "
+            "There are deliberately two human gates: one for \"this code is safe to keep\" and a second "
+            "for \"yes, run it on my machine.\"",
+            styles["body"],
+        )
+    )
+    story.append(
+        Paragraph(
+            "<b>How we fixed it.</b> Nothing to fix in the agent itself — the two-gate flow is the right "
+            "behavior for a tool that runs LLM-generated code on the user's machine. We updated the "
+            "README's example session to make the approve-then-<font face='Courier'>run</font> sequence "
+            "explicit, so anyone using the agent for the first time will not get tripped up the same way.",
             styles["body"],
         )
     )
