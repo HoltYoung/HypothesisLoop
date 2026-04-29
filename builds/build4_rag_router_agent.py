@@ -48,6 +48,7 @@ import argparse
 import importlib
 import inspect
 import json
+import os
 import re
 import subprocess
 import sys
@@ -79,6 +80,47 @@ from src.rag_faiss_utils_pdf import (
 # always set the location of the .env file to the project root for consistent env var loading
 PROJECT_ROOT = Path(__file__).resolve().parents[1]  # project root (parent of /builds)
 load_dotenv(PROJECT_ROOT / ".env", override=True)
+
+# --------------------------------------------------------------------------------------
+# LLM provider dispatch (openai | moonshot)
+# --------------------------------------------------------------------------------------
+# Embeddings (RAG) always go through OpenAIEmbeddings -> reads OPENAI_API_KEY from env.
+# Chat LLMs go through ChatOpenAI; we pass api_key/base_url explicitly so swapping the
+# chat provider does NOT clobber the embeddings key.
+_LLM_KWARGS: Dict[str, Any] = {}
+_FORCE_TEMP_ONE: bool = False  # True for Kimi K2 reasoning models that reject any temperature != 1.0
+
+
+def _safe_temp(requested: float) -> float:
+    return 1.0 if _FORCE_TEMP_ONE else requested
+
+
+def _resolve_provider(cli_value: Optional[str]) -> str:
+    return (cli_value or os.environ.get("DEFAULT_CHAT_PROVIDER") or "openai").lower()
+
+
+def _resolve_model(cli_value: Optional[str], provider: str) -> str:
+    if cli_value:
+        return cli_value
+    if provider == "moonshot":
+        return os.environ.get("DEFAULT_CHAT_MODEL_MOONSHOT") or "kimi-k2.6"
+    return os.environ.get("DEFAULT_CHAT_MODEL_OPENAI") or "gpt-4o-mini"
+
+
+def _configure_llm(provider: str) -> None:
+    global _LLM_KWARGS
+    if provider == "moonshot":
+        key = os.environ.get("KIMI_API_KEY") or os.environ.get("MOONSHOT_API_KEY")
+        if not key:
+            raise RuntimeError(
+                "provider=moonshot but neither KIMI_API_KEY nor MOONSHOT_API_KEY is set in .env"
+            )
+        base = os.environ.get("MOONSHOT_BASE_URL") or "https://api.moonshot.ai/v1"
+        _LLM_KWARGS = {"api_key": key, "base_url": base}
+    elif provider == "openai":
+        _LLM_KWARGS = {}  # ChatOpenAI picks up OPENAI_API_KEY from env
+    else:
+        raise ValueError(f"Unknown provider: {provider!r}. Use 'openai' or 'moonshot'.")
 
 # --------------------------------------------------------------------------------------
 # Langfuse instrumentation
@@ -631,7 +673,7 @@ def normalize_tool_return(tool_name: str, result: Any) -> ToolResult:
 def build_suggest_chain(
     model: str, temperature: float = 0.2, stream: bool = False, memory: bool = False
 ):
-    llm = ChatOpenAI(model=model, temperature=temperature, streaming=stream)
+    llm = ChatOpenAI(model=model, temperature=temperature, streaming=stream, **_LLM_KWARGS)
     system_text = (
         "You are a data analysis assistant.\n"
         "You ONLY see the dataset schema (columns + dtypes). Do NOT invent columns.\n\n"
@@ -677,7 +719,7 @@ def build_suggest_chain(
 def build_codegen_chain(
     model: str, temperature: float = 0.2, stream: bool = False, memory: bool = False
 ):
-    llm = ChatOpenAI(model=model, temperature=temperature, streaming=stream)
+    llm = ChatOpenAI(model=model, temperature=temperature, streaming=stream, **_LLM_KWARGS)
     system_text = (
         "You are a careful Python data analysis code generator.\n"
         "\n"
@@ -785,7 +827,7 @@ def build_toolplan_chain(
     stream: bool = False,
 ):
     """Pick one tool + args ONLY (JSON)."""
-    llm = ChatOpenAI(model=model, temperature=temperature, streaming=stream)
+    llm = ChatOpenAI(model=model, temperature=temperature, streaming=stream, **_LLM_KWARGS)
     allow_str = format_capability_hints(allowed_tools, tool_descriptions)
 
     system_text = dedent(
@@ -847,7 +889,7 @@ def build_router_chain(
     temperature: float = 0.0,
     stream: bool = False,
 ):
-    llm = ChatOpenAI(model=model, temperature=temperature, streaming=stream)
+    llm = ChatOpenAI(model=model, temperature=temperature, streaming=stream, **_LLM_KWARGS)
     allow_str = format_capability_hints(allowed_tools, tool_descriptions)
 
     system_text = dedent(
@@ -937,7 +979,7 @@ def build_router_chain(
 def build_results_summarizer_chain(
     model: str, temperature: float = 0.2, stream: bool = False
 ):
-    llm = ChatOpenAI(model=model, temperature=temperature, streaming=stream)
+    llm = ChatOpenAI(model=model, temperature=temperature, streaming=stream, **_LLM_KWARGS)
     system_text = (
         "You are an expert at explaining data analysis results.\n"
         "Given a user request and tool outputs, do:\n"
@@ -1465,7 +1507,19 @@ def main() -> None:
     )
     parser.add_argument("--data", type=str, required=True)
     parser.add_argument("--report_dir", type=str, default="reports")
-    parser.add_argument("--model", type=str, default="gpt-4o-mini")
+    parser.add_argument(
+        "--provider",
+        type=str,
+        default=None,
+        choices=["openai", "moonshot"],
+        help="Chat LLM provider. Default reads DEFAULT_CHAT_PROVIDER from .env (falls back to openai).",
+    )
+    parser.add_argument(
+        "--model",
+        type=str,
+        default=None,
+        help="Chat model id. Default picks DEFAULT_CHAT_MODEL_<PROVIDER> from .env.",
+    )
     parser.add_argument("--temperature", type=float, default=0.2)
     parser.add_argument("--memory", action="store_true")
     parser.add_argument("--stream", action="store_true")
@@ -1488,6 +1542,20 @@ def main() -> None:
         "--tags", type=str, default="build4", help="Comma-separated Langfuse tags"
     )
     args = parser.parse_args()
+
+    # Resolve and configure chat-LLM provider before any chain is built.
+    provider = _resolve_provider(args.provider)
+    args.model = _resolve_model(args.model, provider)
+    _configure_llm(provider)
+
+    # Kimi K2 reasoning models reject any temperature except 1.0 (applies even to
+    # router/toolplan chains that normally pin temperature=0 for determinism).
+    global _FORCE_TEMP_ONE
+    if provider == "moonshot" and args.model.lower().startswith("kimi-k2"):
+        _FORCE_TEMP_ONE = True
+        if args.temperature != 1.0:
+            print(f"[provider=moonshot model={args.model}] forcing temperature=1.0 (reasoning model constraint)")
+            args.temperature = 1.0
 
     tag_list = parse_tags(args.tags)
 
@@ -1539,7 +1607,7 @@ def main() -> None:
         allowed_tools=allowed_tools,
         tool_descriptions=tool_descriptions,
         tool_arg_hints=tool_arg_hints,
-        temperature=0.0,
+        temperature=_safe_temp(0.0),
         stream=args.stream,
     )
     router_chain = build_router_chain(
@@ -1547,7 +1615,7 @@ def main() -> None:
         allowed_tools=allowed_tools,
         tool_descriptions=tool_descriptions,
         tool_arg_hints=tool_arg_hints,
-        temperature=0.0,
+        temperature=_safe_temp(0.0),
         stream=args.stream,
     )
     summarize_chain = build_results_summarizer_chain(
@@ -1559,6 +1627,7 @@ def main() -> None:
     script_path = session_dirs["generated_session"] / args.out_file
 
     print("\n=== build4a: HITL + Router + RAG ===\n")
+    print(f"Chat LLM: provider={provider}  model={args.model}  temperature={args.temperature}")
     print(f"Tags: {tag_list}")
     print(f"Session artifact folder: {session_dirs['generated_session']}")
     print(f"Tool output folder   : {session_dirs['tool_output_session']}")
