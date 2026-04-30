@@ -46,6 +46,7 @@ figures/
 outputs/
 tool_outputs/
 tool_figures/
+*.session.json
 # --------------------------------------------------
 # Logs
 # --------------------------------------------------
@@ -73,9 +74,21 @@ docker-compose.yml
 !docs/Langfuse_Tracing_Log_Build4.pdf
 
 # --------------------------------------------------
-# Personal instruction files
+# Personal instruction files (now archived; keep ignored)
 # --------------------------------------------------
 instructions/
+archive/instructions/
+
+# --------------------------------------------------
+# Inspiration / reference repos (cloned locally for reading; not deliverables)
+# --------------------------------------------------
+inspirations/
+
+# --------------------------------------------------
+# UI screenshots (capture during local Streamlit testing; not committed)
+# --------------------------------------------------
+*.png
+!hypothesisloop/**/*.png
 
 # --------------------------------------------------
 # Local tooling / agent state

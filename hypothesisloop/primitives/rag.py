@@ -275,6 +275,72 @@ def retrieve_chunks(
     return results
 
 
+def save_index(
+    index: faiss.IndexFlatIP,
+    chunks: list[RagChunk],
+    *,
+    index_path: str | Path,
+    chunks_path: str | Path,
+    embedding_model: str,
+) -> tuple[Path, Path]:
+    """Write a FAISS index + pickled chunks to explicit paths.
+
+    The legacy ``save_faiss_index`` insists on ``rag_faiss.index`` /
+    ``rag_chunks.pkl`` filenames inside a directory; this wrapper is the
+    explicit-path variant Phase 3 wants for ``rag.index`` / ``rag_chunks.pkl``.
+    """
+    index_path = Path(index_path)
+    chunks_path = Path(chunks_path)
+    index_path.parent.mkdir(parents=True, exist_ok=True)
+    chunks_path.parent.mkdir(parents=True, exist_ok=True)
+
+    faiss.write_index(index, str(index_path))
+    with open(chunks_path, "wb") as f:
+        pickle.dump({"embedding_model": embedding_model, "chunks": chunks}, f)
+    return index_path, chunks_path
+
+
+def load_index(
+    index_path: str | Path,
+    chunks_path: str | Path,
+) -> tuple[faiss.IndexFlatIP, list[RagChunk]]:
+    """Load a saved index + chunk metadata. Returns (index, chunks)."""
+    index_path = Path(index_path)
+    chunks_path = Path(chunks_path)
+    if not index_path.exists() or not chunks_path.exists():
+        raise FileNotFoundError(
+            f"Missing RAG index files: expected {index_path} and {chunks_path}."
+        )
+    index = faiss.read_index(str(index_path))
+    with open(chunks_path, "rb") as f:
+        payload = pickle.load(f)
+    return index, payload["chunks"]
+
+
+def retrieve(
+    query: str,
+    index: faiss.IndexFlatIP,
+    chunks: list[RagChunk],
+    k: int = 4,
+    embedding_model: str = "text-embedding-3-small",
+) -> list[dict]:
+    """Top-k retrieval. Returns list of {"text", "source", "score"} dicts.
+
+    Thin wrapper over :func:`retrieve_chunks` that flattens the (chunk, score)
+    tuples into prompt-friendly dicts. Empty if ``chunks`` is empty.
+    """
+    raw = retrieve_chunks(query, index, chunks, k=k, embedding_model=embedding_model)
+    return [
+        {
+            "text": chunk.text,
+            "source": chunk.source,
+            "heading": chunk.heading,
+            "score": float(score),
+        }
+        for chunk, score in raw
+    ]
+
+
 def format_rag_context(results: list[tuple[RagChunk, float]]) -> str:
     if not results:
         return "No retrieved reference material."

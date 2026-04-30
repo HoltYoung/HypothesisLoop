@@ -1,13 +1,11 @@
 # tools registry for ai data analysis agent
 
-import src.checks as checks
-import src.io_utils as io_utils
-import src.modeling as modeling
-import src.plotting as plotting
-import src.profiling as profiling
-import src.summaries as summaries
-
-# src/tools.py
+from hypothesisloop.primitives import checks
+from hypothesisloop.primitives import io_utils
+from hypothesisloop.primitives import modeling
+from hypothesisloop.primitives import plotting
+from hypothesisloop.primitives import profiling
+from hypothesisloop.primitives import summaries
 
 TOOLS = {
     # summaries

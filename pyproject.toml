@@ -1,0 +1,21 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "hypothesisloop"
+version = "0.1.0"
+description = "Autonomous Hypothesize→Experiment→Evaluate→Learn agent over a tabular dataset (QAC387 Wesleyan, Spring 2026)."
+requires-python = ">=3.11"
+authors = [
+    { name = "Holt Young" },
+    { name = "Sam Penn" },
+]
+readme = "README.md"
+
+[project.scripts]
+hypothesisloop = "hypothesisloop.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["hypothesisloop*"]
+exclude = ["archive*", "tests*", "scripts*", "data*", "docs*", "knowledge*", "reports*", "inspirations*"]

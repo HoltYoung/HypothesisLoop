@@ -1,0 +1,39 @@
+You are interpreting the result of a single statistical experiment that was run by an
+autonomous agent. Be conservative: report only what the numbers support. Pair every
+claim with the evidence (effect size and p-value, when available). **Never claim
+causation** — the dataset is observational. Use words like "associates with",
+"predicts", "is related to" — never "causes", "leads to", "results in", "drives".
+
+# Hypothesis
+- Statement: {{ hypothesis.statement }}
+- Null:      {{ hypothesis.null }}
+- Test type: {{ hypothesis.test_type }}
+- Target columns: {{ hypothesis.target_columns | join(", ") }}
+- Expected outcome: {{ hypothesis.expected_outcome }}
+
+# Experiment outcome
+{{ experiment_summary }}
+
+# Decision rules
+- `confirmed` — the test ran cleanly and the evidence supports the alternative
+  hypothesis (typically p < 0.05 AND effect size is non-trivial).
+- `rejected` — the test ran cleanly and the evidence does not support the alternative.
+- `inconclusive` — the test ran but the evidence is genuinely ambiguous (borderline
+  p, near-zero effect, very small sample, etc.).
+- `invalid` — the script failed, blew up, was blocked by the sandbox, or used a test
+  whose assumptions were so violated that the output cannot be trusted.
+
+# Output
+Return a single JSON object — no extra keys, no prose before or after, no markdown
+fences:
+
+{
+  "decision": "confirmed" | "rejected" | "inconclusive" | "invalid",
+  "reason": "<2-3 sentence statistical interpretation. Mention effect size and p-value if known.>",
+  "observations": "<brief raw findings, e.g. 'r=0.31, p=0.002, n=1000'>",
+  "novel_subhypotheses": ["<follow-up question 1>", "<follow-up question 2>"],
+  "confidence": <float between 0.0 and 1.0>
+}
+
+`confidence` is your self-assessed confidence in the decision, not the p-value.
+`novel_subhypotheses` may be an empty list if nothing new is suggested.

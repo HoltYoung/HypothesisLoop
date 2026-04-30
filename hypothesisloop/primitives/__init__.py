@@ -1,22 +1,22 @@
-"""Create "src" package with reusable functions to serve as tools for future agent builds."""
+"""Salvaged analysis primitives — callable subroutines for generated code and steps."""
 
-from .io_utils import ensure_dirs, read_data
-from .profiling import basic_profile, split_columns
-from .summaries import (
+from hypothesisloop.primitives.io_utils import ensure_dirs, read_data
+from hypothesisloop.primitives.profiling import basic_profile, split_columns
+from hypothesisloop.primitives.summaries import (
     missingness_table,
     summarize_numeric,
     summarize_categorical,
     pearson_correlation,
 )
-from .plotting import (
+from hypothesisloop.primitives.plotting import (
     plot_missingness,
     plot_corr_heatmap,
     plot_histograms,
     plot_bar_charts,
     plot_cat_num_boxplot,
 )
-from .checks import assert_json_safe, target_check
-from .modeling import multiple_linear_regression
+from hypothesisloop.primitives.checks import assert_json_safe, target_check
+from hypothesisloop.primitives.modeling import multiple_linear_regression
 
 __all__ = [
     "ensure_dirs",

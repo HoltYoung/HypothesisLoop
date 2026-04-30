@@ -1,0 +1,70 @@
+You are writing Python code to test a single hypothesis on a tabular dataset.
+
+# Hypothesis
+- Statement: {{ hypothesis.statement }}
+- Null: {{ hypothesis.null }}
+- Test type: {{ hypothesis.test_type }}
+- Target columns: {{ hypothesis.target_columns | join(", ") }}
+- Expected outcome: {{ hypothesis.expected_outcome }}
+
+# Dataset schema
+{{ schema_summary }}
+
+# Runtime environment
+- A pandas DataFrame named `df` is **already loaded** in your namespace from `{{ dataset_path }}`.
+  Do NOT call `pd.read_csv` — `df` is ready to use. Imports `import pandas as pd` and
+  `import numpy as np` are already done.
+- Random seed is already set to 42 (`random.seed(42)`, `np.random.seed(42)`).
+- A function `hl_emit(key, value)` is pre-defined in your namespace. Use it to surface
+  every metric you compute. It writes to `metrics.json` which the evaluator reads.
+  Do not import or define `hl_emit` — it is already available.
+
+# Available libraries (you may import these)
+pandas, numpy, scipy, scipy.stats, sklearn (any submodule), matplotlib.pyplot,
+seaborn, math, statistics, json, datetime, decimal, collections, itertools,
+functools, re
+
+# Forbidden (your code will be statically rejected if it touches any of these)
+- Imports: os, subprocess, socket, shutil, sys, requests, urllib, ctypes,
+  multiprocessing, threading, pathlib, tempfile, io, pickle, importlib
+- Builtins: open, eval, exec, compile, __import__, globals, locals, vars,
+  getattr, setattr, delattr
+- Names: __builtins__, __import__, __class__, __bases__, __subclasses__, __mro__,
+  __globals__
+
+# Required pattern
+1. Compute the test statistic, effect size, and p-value (or equivalents for your
+   test type).
+2. Print a one-line human-readable summary to stdout (the evaluator reads it).
+3. For EVERY metric you compute, also call `hl_emit("name", value)` — at minimum:
+   `hl_emit("p_value", ...)`, `hl_emit("effect_size", ...)`, plus a
+   `hl_emit("n", ...)` for the sample size used.
+4. Save any plots via `plt.savefig("name.png")` — relative paths only, no
+   absolute paths.
+5. Pass `random_state=42` to any sklearn estimator that takes it.
+6. ASCII identifiers only. All Python identifiers (variables, functions,
+   parameters, kwargs) **MUST** match `[A-Za-z_][A-Za-z0-9_]*`. Never use
+   non-ASCII characters in identifier names. Strings and comments may
+   contain any unicode.
+{% if prior_code %}
+
+# Previous attempt failed
+The previous code you wrote was:
+```python
+{{ prior_code }}
+```
+
+It failed with:
+{{ last_error_summary }}
+
+Diagnose the cause and rewrite the **entire** script. Do not rephrase the same
+approach. If the failure is a `KeyError` on a column, double-check the schema
+above for the exact column name (including spaces, capitalization, hyphens).
+If the failure is a statistical-test mismatch (wrong assumption about
+distribution or scale), pick a more appropriate test.
+{% endif %}
+
+# Output
+Output ONLY Python code. No markdown fences, no commentary, no explanations
+before or after. The first character of your response must be Python (e.g.,
+`import` or a comment `#`). The last line must be Python.

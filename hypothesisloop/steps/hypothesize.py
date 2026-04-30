@@ -1,0 +1,224 @@
+"""Hypothesize step — real LLM-backed hypothesis proposer.
+
+Stateless after construction. Implements the ``HypothesizeFn`` callable
+shape from ``hypothesisloop.agent.loop`` so it can be plugged into
+``run_loop`` directly.
+"""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+from typing import Any, Callable, Literal, Optional
+
+from dotenv import load_dotenv
+from jinja2 import Environment, FileSystemLoader, StrictUndefined
+from pydantic import BaseModel, ValidationError
+
+from hypothesisloop.agent.state import (
+    DAGTrace,
+    Hypothesis,
+    TraceNode,
+    new_hypothesis_id,
+)
+from hypothesisloop.trace.langfuse_client import RESEARCH_HYPOTHESIS, observe
+
+# CRITICAL: override=True — feedback_env_override.
+load_dotenv(override=True)
+
+
+_DEFAULT_PROMPT_PATH = (
+    Path(__file__).resolve().parents[1] / "prompts" / "hypothesize.j2"
+)
+_TestTypeLiteral = Literal[
+    "correlation", "group_diff", "regression", "distribution", "custom"
+]
+
+
+class HypothesisDraft(BaseModel):
+    """LLM-boundary validator. Not part of the persisted state schema."""
+
+    statement: str
+    null: str
+    test_type: _TestTypeLiteral
+    target_columns: list[str]
+    expected_outcome: str
+    concise_reason: str
+    concise_observation: str
+    concise_justification: str
+    concise_knowledge: str
+
+
+def _bind_json(llm: Any) -> Any:
+    """Bind ``response_format={"type":"json_object"}`` if the LLM supports it.
+
+    Real LangChain runnables have a ``.bind`` method; test stubs may not.
+    """
+    bind = getattr(llm, "bind", None)
+    if callable(bind):
+        try:
+            return bind(response_format={"type": "json_object"})
+        except Exception:
+            return llm
+    return llm
+
+
+def _content_of(response: Any) -> str:
+    """Extract the text content of an LLM response, tolerantly."""
+    content = getattr(response, "content", response)
+    if isinstance(content, list):
+        # langchain may return list-of-parts on multi-modal responses.
+        return "".join(p.get("text", "") if isinstance(p, dict) else str(p) for p in content)
+    return str(content)
+
+
+def _reason_short(reason: str, n: int = 120) -> str:
+    if len(reason) <= n:
+        return reason
+    return reason[: n - 1].rstrip() + "…"
+
+
+class Hypothesize:
+    """Real LLM-backed hypothesis proposer.
+
+    Construct once, then call as ``hypothesize_fn(trace, parent)``. Wrapped in
+    ``@observe`` so every call lands in Langfuse under ``research.hypothesis``.
+    """
+
+    def __init__(
+        self,
+        *,
+        llm: Any,
+        retriever: Callable[[str], list[dict]],
+        prompt_path: Path | str = _DEFAULT_PROMPT_PATH,
+        rag_k: int = 4,
+        scheduler: Any = None,
+        pruner: Any = None,
+    ):
+        self.llm = _bind_json(llm)
+        self.retriever = retriever
+        self.rag_k = rag_k
+        self.scheduler = scheduler
+        self.pruner = pruner
+        prompt_path = Path(prompt_path)
+        env = Environment(
+            loader=FileSystemLoader(str(prompt_path.parent)),
+            undefined=StrictUndefined,
+            trim_blocks=False,
+            lstrip_blocks=False,
+        )
+        self._template = env.get_template(prompt_path.name)
+        # Stash the most recently rendered prompt so tests can inspect it.
+        self.last_prompt: Optional[str] = None
+
+    def _render(
+        self,
+        *,
+        trace: DAGTrace,
+        iteration_idx: int,
+        rag_chunks: list[dict],
+        injected_redirect: Optional[str],
+    ) -> str:
+        if self.pruner is not None:
+            prior_hypotheses = self.pruner.prior_hypotheses_view(trace)
+            rejected_hypotheses = self.pruner.rejected_view(trace)
+        else:
+            prior_hypotheses = self._build_priors_no_pruner(trace)
+            rejected_hypotheses = self._build_rejected_no_pruner(trace)
+
+        return self._template.render(
+            dataset_path=trace.dataset_path,
+            question=trace.question,
+            schema_summary=trace.schema_summary or "_(schema not yet profiled)_",
+            rag_chunks=rag_chunks,
+            prior_hypotheses=prior_hypotheses,
+            rejected_hypotheses=rejected_hypotheses,
+            injected_redirect=injected_redirect,
+            iteration_idx=iteration_idx,
+        )
+
+    @staticmethod
+    def _build_priors_no_pruner(trace: DAGTrace) -> list[dict]:
+        priors: list[dict] = []
+        for node_id in trace._order:  # private but stable; preserves insertion order
+            node = trace.get(node_id)
+            if node.feedback is None:
+                continue
+            metrics: Optional[dict] = None
+            if node.experiment is not None and node.experiment.attempts:
+                metrics = dict(node.experiment.attempts[-1].metrics or {})
+            priors.append(
+                {
+                    "statement": node.hypothesis.statement,
+                    "decision": node.feedback.decision,
+                    "reason_short": _reason_short(node.feedback.reason),
+                    "metrics": metrics,
+                    "code_snippet": None,
+                    "re_explore": bool(node.hypothesis.re_explore),
+                }
+            )
+        return priors
+
+    @staticmethod
+    def _build_rejected_no_pruner(trace: DAGTrace) -> list[dict]:
+        return [
+            {
+                "statement": h.statement,
+                "rejection_reason": "embedding similarity above novelty gate",
+            }
+            for h in trace.novelty_rejected
+        ]
+
+    @observe(name=RESEARCH_HYPOTHESIS)
+    def __call__(self, trace: DAGTrace, parent: Optional[TraceNode]) -> Hypothesis:
+        iteration_idx = trace.iteration_count() + 1
+
+        # Truncate the schema in the retrieval query so we don't blow embedding tokens.
+        retrieval_query = (trace.question + " " + (trace.schema_summary or ""))[:1000]
+        rag_chunks = self.retriever(retrieval_query)[: self.rag_k]
+
+        injected_redirect: Optional[str] = None
+        if self.scheduler is not None:
+            consume = getattr(self.scheduler, "consume_injection", None)
+            if callable(consume):
+                injected_redirect = consume()
+
+        prompt = self._render(
+            trace=trace,
+            iteration_idx=iteration_idx,
+            rag_chunks=rag_chunks,
+            injected_redirect=injected_redirect,
+        )
+        self.last_prompt = prompt
+
+        response = self.llm.invoke(prompt)
+        raw = _content_of(response).strip()
+
+        # Parse JSON first so a malformed body becomes a clean RuntimeError
+        # carrying the raw output (callers can choose to retry). Schema-level
+        # mismatches still surface as pydantic ValidationError.
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError as e:
+            raise RuntimeError(
+                f"hypothesize: LLM output is not valid JSON ({e}). Raw output:\n{raw!r}"
+            ) from e
+        draft = HypothesisDraft.model_validate(payload)
+
+        return Hypothesis(
+            id=new_hypothesis_id(),
+            parent_id=(parent.id if parent is not None else None),
+            iteration=iteration_idx,
+            statement=draft.statement,
+            null=draft.null,
+            test_type=draft.test_type,
+            target_columns=list(draft.target_columns),
+            expected_outcome=draft.expected_outcome,
+            concise_reason=draft.concise_reason,
+            concise_observation=draft.concise_observation,
+            concise_justification=draft.concise_justification,
+            concise_knowledge=draft.concise_knowledge,
+        )
+
+
+__all__ = ["Hypothesize", "HypothesisDraft"]
