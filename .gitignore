@@ -81,3 +81,6 @@ instructions/
 # Local tooling / agent state
 # --------------------------------------------------
 .claude/
+
+# Langfuse trace exports (may contain API keys)
+.lf_*.json
