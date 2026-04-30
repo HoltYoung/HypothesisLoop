@@ -206,30 +206,30 @@ CHECKLIST = [
 
 
 VALIDATION_ROWS = [
-    ["ID", "Prompt", "Category", "Expected route", "Actual route", "Retrieval relevant?", "Execution OK?", "Quality (0-5)", "Notes"],
+    ["ID", "Prompt", "Category", "Expected route", "Actual route", "Retrieval", "Exec", "Q", "Notes"],
     ["1", "compute pearson correlations between numeric columns", "Simple tool",
      "tool: pearson_correlation",
      "tool: pearson_correlation, args:{x:'age', y:'fnlwgt'}",
      "n/a", "Yes", "2",
      "Router invented x and y for an arg-less tool. Tool ignored the kwargs and ran on all numeric columns, but the LLM summary reported the wrong scope."],
     ["2", "write code that bins age into 5 quantiles and shows income rate per quantile", "Simple codegen",
-     "codegen", "codegen", "Partial", "Yes (return code 0)", "1",
-     "Generated code is a boxplot of hours_per_week by income, not age-quantile income rate. Code executed cleanly but solves the wrong problem."],
+     "codegen", "codegen", "Partial", "Yes", "1",
+     "Generated code is a boxplot of hours_per_week by income, not age-quantile income rate. Code ran cleanly (return code 0) but solves the wrong problem."],
     ["3", "according to the knowledge base when should I use multiple regression?", "RAG-conceptual",
-     "answer", "answer", "Yes", "No (validator blocks)", "0",
-     "Router gave a sensible plain-language answer; validator rejects mode=answer so the user sees only ERROR."],
+     "answer", "answer", "Yes", "No", "0",
+     "Router gave a sensible plain-language answer; validator rejects mode=answer (F1) so the user sees only ERROR."],
     ["4", "use the knowledge base to recommend an analysis and then run it", "Mixed",
-     "tool or chain", "tool: basic_profile", "Partial", "Yes (tool ran)", "2",
-     "Tool executed. Final summary used placeholder values (X, Y) instead of the actual basic_profile output."],
+     "tool or chain", "tool: basic_profile", "Partial", "Yes", "2",
+     "Tool ran. Final summary used placeholder values (X, Y) instead of the actual basic_profile output (F4)."],
     ["5", "help me analyze this dataset", "Ambiguous",
-     "any reasonable", "answer", "Yes", "No (validator blocks)", "0",
-     "Reasonable workflow guidance produced and discarded by validator."],
+     "any reasonable", "answer", "Yes", "No", "0",
+     "Reasonable workflow guidance produced, discarded by validator (F1)."],
     ["6", "analyze the column nonexistent_variable_xyz", "Bad input",
-     "refuse", "answer", "Yes", "No (validator blocks)", "0",
+     "refuse", "answer", "Yes", "No", "0",
      "Correct detection of the missing column. Delivery broken by F1."],
     ["7", "how do I fix my kitchen sink?", "Unrelated",
-     "refuse", "answer", "Yes", "No (validator blocks)", "0",
-     "Polite off-topic refusal generated and discarded by validator."],
+     "refuse", "answer", "Yes", "No", "0",
+     "Polite off-topic refusal generated, discarded by validator (F1)."],
 ]
 
 
@@ -308,9 +308,15 @@ def build():
     flow.append(p("Validation log", st["h1"]))
     avail = LETTER[0] - 1.2 * inch
     widths = [
-        avail * 0.03, avail * 0.18, avail * 0.08, avail * 0.10,
-        avail * 0.12, avail * 0.08, avail * 0.09, avail * 0.06,
-        avail * 0.26,
+        avail * 0.04,  # ID
+        avail * 0.17,  # Prompt
+        avail * 0.10,  # Category
+        avail * 0.11,  # Expected route
+        avail * 0.14,  # Actual route
+        avail * 0.07,  # Retrieval
+        avail * 0.05,  # Exec
+        avail * 0.04,  # Q
+        avail * 0.28,  # Notes
     ]
     flow.append(make_table(VALIDATION_ROWS, st, col_widths=widths))
 
