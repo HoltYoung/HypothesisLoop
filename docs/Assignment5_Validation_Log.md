@@ -112,52 +112,46 @@ Legend: [x] = pass, [~] = partial, [ ] = fail.
 
 ## 10. One prompt per category (the seven required tests)
 
-Every command below was run from the repo root with the `.env` file loaded.
-The full transcript for each prompt is in `docs/a5_runs/p<N>.out` and the
-artifacts are in `reports/session_a5-p<N>/`.
+Each prompt was typed at the agent's `>` prompt during a single
+interactive session. The launch command and the per-prompt HITL flow are
+documented in `docs/Reproduce_Assignment5.md`. Raw transcripts for each
+prompt (captured by piping into stdin so the output could be saved to a
+file) are in `docs/a5_runs/p<N>.out`.
+
+To reproduce, launch the agent once with:
+
+```
+PYTHONPATH=. python builds/build4_rag_router_agent.py \
+    --data data/adult.csv --knowledge_dir knowledge --report_dir reports \
+    --provider openai --session_id a5-fresh --tags build4,assignment5,fresh
+```
+
+then type each `ask ...` line below at the `>` prompt and answer the
+HITL questions as they appear (`y` to approve a tool; `y` then `run`
+then `y` for codegen; nothing for answer-mode prompts because the
+validator rejects them before any HITL question is asked).
 
 ### P1. Simple tool
 
-**Prompt:** `compute pearson correlations between numeric columns`
-
-```
-printf "ask compute pearson correlations between numeric columns\ny\ny\nexit\n" \
-  | PYTHONPATH=. python builds/build4_rag_router_agent.py \
-      --data data/adult.csv --knowledge_dir knowledge --report_dir reports \
-      --provider openai --session_id a5-p1 --tags build4,assignment5,fresh
-```
+**Prompt:** `ask compute pearson correlations between numeric columns`
 
 Router routed to `pearson_correlation` with hallucinated args `{x:"age", y:"fnlwgt"}`.
 The tool ignores unexpected args and computed the full numeric correlation set;
 the LLM summary, however, claimed it had only computed the age vs. fnlwgt pair.
-Tool output: `reports/tool_outputs/session_a5-p1/pearson_correlation_output.txt`.
+Tool output: `reports/tool_outputs/session_a5-fresh/pearson_correlation_output.txt`.
 
 ### P2. Simple codegen
 
-**Prompt:** `write code that bins age into 5 quantiles and shows income rate per quantile`
-
-```
-printf "ask write code that bins age into 5 quantiles and shows income rate per quantile\ny\nrun\ny\nexit\n" \
-  | PYTHONPATH=. python builds/build4_rag_router_agent.py \
-      --data data/adult.csv --knowledge_dir knowledge --report_dir reports \
-      --provider openai --session_id a5-p2 --tags build4,assignment5,fresh
-```
+**Prompt:** `ask write code that bins age into 5 quantiles and shows income rate per quantile`
 
 Router routed to codegen. Generated code targeted the wrong analysis: a boxplot
 of `hours_per_week` by `income` rather than age-quantile income rate. The PLAN
 block also described the wrong task. The script executed cleanly (return code 0)
-and saved a PNG to `reports/session_a5-p2/`.
+and saved a PNG to `reports/session_a5-fresh/`.
 
 ### P3. RAG-conceptual
 
-**Prompt:** `according to the knowledge base when should I use multiple regression?`
-
-```
-printf "ask according to the knowledge base when should I use multiple regression?\ny\nrun\ny\nexit\n" \
-  | PYTHONPATH=. python builds/build4_rag_router_agent.py \
-      --data data/adult.csv --knowledge_dir knowledge --report_dir reports \
-      --provider openai --session_id a5-p3 --tags build4,assignment5,fresh
-```
+**Prompt:** `ask according to the knowledge base when should I use multiple regression?`
 
 Router correctly chose `mode: "answer"` and gave a sensible plain-language
 explanation. The agent's validator then rejected the response because it only
@@ -166,14 +160,7 @@ accepts `tool` or `codegen`, so the user saw `ERROR: Router 'mode' must be
 
 ### P4. Mixed (knowledge + run)
 
-**Prompt:** `use the knowledge base to recommend an analysis and then run it`
-
-```
-printf "ask use the knowledge base to recommend an analysis and then run it\ny\nrun\ny\nexit\n" \
-  | PYTHONPATH=. python builds/build4_rag_router_agent.py \
-      --data data/adult.csv --knowledge_dir knowledge --report_dir reports \
-      --provider openai --session_id a5-p4 --tags build4,assignment5,fresh
-```
+**Prompt:** `ask use the knowledge base to recommend an analysis and then run it`
 
 Router routed to `basic_profile` and the tool ran cleanly. The follow-on summary
 chain produced placeholder text such as "the average value of the primary metric
@@ -182,14 +169,7 @@ into the final summary the user reads.
 
 ### P5. Ambiguous
 
-**Prompt:** `help me analyze this dataset`
-
-```
-printf "ask help me analyze this dataset\ny\nrun\ny\nexit\n" \
-  | PYTHONPATH=. python builds/build4_rag_router_agent.py \
-      --data data/adult.csv --knowledge_dir knowledge --report_dir reports \
-      --provider openai --session_id a5-p5 --tags build4,assignment5,fresh
-```
+**Prompt:** `ask help me analyze this dataset`
 
 Router chose `mode: "answer"` and produced a reasonable workflow recommendation
 (profile, missingness, distributions, relationships). Validator rejected it, so
@@ -197,14 +177,7 @@ the user only saw the ERROR.
 
 ### P6. Bad input
 
-**Prompt:** `analyze the column nonexistent_variable_xyz`
-
-```
-printf "ask analyze the column nonexistent_variable_xyz\ny\nrun\ny\nexit\n" \
-  | PYTHONPATH=. python builds/build4_rag_router_agent.py \
-      --data data/adult.csv --knowledge_dir knowledge --report_dir reports \
-      --provider openai --session_id a5-p6 --tags build4,assignment5,fresh
-```
+**Prompt:** `ask analyze the column nonexistent_variable_xyz`
 
 Router correctly identified that the column does not exist and produced a
 refusal in `mode: "answer"`. Validator rejected it. The detection logic works;
@@ -212,14 +185,7 @@ the delivery is broken.
 
 ### P7. Unrelated
 
-**Prompt:** `how do I fix my kitchen sink?`
-
-```
-printf "ask how do I fix my kitchen sink?\ny\nrun\ny\nexit\n" \
-  | PYTHONPATH=. python builds/build4_rag_router_agent.py \
-      --data data/adult.csv --knowledge_dir knowledge --report_dir reports \
-      --provider openai --session_id a5-p7 --tags build4,assignment5,fresh
-```
+**Prompt:** `ask how do I fix my kitchen sink?`
 
 Router correctly classified the request as off-topic and produced a polite
 refusal in `mode: "answer"`. Validator rejected it.
