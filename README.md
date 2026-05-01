@@ -42,16 +42,44 @@ land in Phase 7; Streamlit UI is Phase 8.
 - Phase 8 complete: Streamlit UI with mission-control theme.
 - Phase 9 complete: Predict mode (feature engineering loop + AutoGluon ensemble) + per-call cost tracker + UI overhaul.
 
-## Install
+## Quick start
 
-```bash
-python -m venv .venv
-source .venv/Scripts/activate    # Windows-bash; on POSIX use .venv/bin/activate
-pip install -r requirements.txt
-pip install -e .
+**One command, anywhere:**
+
+```powershell
+# Windows PowerShell
+git clone https://github.com/HoltYoung/HypothesisLoop.git
+cd HypothesisLoop
+.\run.ps1
 ```
 
-Create a `.env` at the repo root with at least:
+```bash
+# Mac / Linux / WSL
+git clone https://github.com/HoltYoung/HypothesisLoop.git
+cd HypothesisLoop
+./run.sh
+```
+
+`run.ps1` / `run.sh` is idempotent and self-contained:
+
+1. Checks Python 3.11+ is installed
+2. Creates `.venv` if missing
+3. Activates it
+4. Installs dependencies (`pip install -e .`) — only on first run or when `pyproject.toml` changes
+5. Verifies `.env` exists; prints a template if not (see below)
+6. Launches the Streamlit UI at `http://localhost:8501`
+
+Re-run anytime — subsequent launches skip the install step automatically.
+
+**If you hit a PowerShell execution-policy block:**
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\run.ps1
+```
+
+### One-time `.env` setup
+
+Create a file named exactly `.env` at the repo root with:
 
 ```ini
 OPENAI_API_KEY=sk-...
