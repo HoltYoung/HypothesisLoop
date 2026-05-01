@@ -41,13 +41,9 @@ COPY --chown=user . $HOME/app
 RUN pip install --user --upgrade pip setuptools wheel \
     && pip install --user -e .
 
-# Streamlit on port 7860 (HF default), bind 0.0.0.0, no XSRF (HF reverse proxy)
+# Streamlit on port 7860 (HF default), bind 0.0.0.0, no XSRF (HF reverse proxy).
+# At container start, ensure the FAISS index is present (it's gitignored because
+# binary blobs trip HF's pre-receive hook; cheap to rebuild on first boot).
 EXPOSE 7860
 
-CMD ["python", "-m", "streamlit", "run", "hypothesisloop/ui/streamlit_app.py", \
-     "--server.port=7860", \
-     "--server.address=0.0.0.0", \
-     "--server.headless=true", \
-     "--server.enableCORS=false", \
-     "--server.enableXsrfProtection=false", \
-     "--browser.gatherUsageStats=false"]
+CMD ["sh", "-c", "python scripts/ensure_rag_index.py && python -m streamlit run hypothesisloop/ui/streamlit_app.py --server.port=7860 --server.address=0.0.0.0 --server.headless=true --server.enableCORS=false --server.enableXsrfProtection=false --browser.gatherUsageStats=false"]

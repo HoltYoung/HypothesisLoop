@@ -98,7 +98,11 @@ LANGFUSE_HOST=https://cloud.langfuse.com
 }
 Write-Info ".env found"
 
-# --- 6. Launch Streamlit ---
+# --- 6. Build RAG index if missing (cheap, ~5s, no-op when already there) ---
+Write-Step "Checking RAG index"
+& python scripts/ensure_rag_index.py
+
+# --- 7. Launch Streamlit ---
 Write-Step "Launching Streamlit at http://localhost:8501"
 Write-Info "Press Ctrl+C in this terminal to stop. Re-run .\run.ps1 anytime."
 Write-Host ""

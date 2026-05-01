@@ -81,7 +81,11 @@ EOF
 fi
 info ".env found"
 
-# --- 6. Launch ---
+# --- 6. Build RAG index if missing (cheap, ~5s, no-op when already there) ---
+step "Checking RAG index"
+python scripts/ensure_rag_index.py
+
+# --- 7. Launch ---
 step "Launching Streamlit at http://localhost:8501"
 info "Press Ctrl+C to stop. Re-run ./run.sh anytime."
 echo ""

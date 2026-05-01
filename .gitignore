@@ -59,6 +59,13 @@ tests/validation_run.log
 /TESTING/
 /report.md
 /report.txt
+
+# RAG artifacts — regenerable; rebuilt at container/local startup if missing
+knowledge/rag.index
+knowledge/rag_chunks.pkl
+archive/knowledge_guides/rag.index
+archive/knowledge_guides/rag_faiss.index
+archive/knowledge_guides/rag_chunks.pkl
 # --------------------------------------------------
 # Logs
 # --------------------------------------------------
