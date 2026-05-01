@@ -1,0 +1,39 @@
+# Auto-deploy to Hugging Face Spaces on every push to main.
+#
+# Setup (one-time):
+#   1. Create an HF access token with WRITE scope:
+#      https://huggingface.co/settings/tokens
+#   2. In this repo's Settings → Secrets and variables → Actions →
+#      New repository secret: name = HF_TOKEN, value = the token.
+#
+# After that, `git push origin main` triggers this workflow, which force-pushes
+# main to the HF Space (replacing whatever was there). The Space rebuilds
+# automatically.
+#
+# We force-push because HF Spaces is downstream of GitHub here — GitHub is the
+# source of truth, the Space mirrors it.
+
+name: Sync to Hugging Face Spaces
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:        # also allow manual trigger from the Actions tab
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout main with full history
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Push to Hugging Face Space (force)
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          git push --force \
+            https://holtyoung:${HF_TOKEN}@huggingface.co/spaces/holtyoung/HypothesisLoop \
+            main:main
