@@ -1,0 +1,53 @@
+# Keep the build context lean — anything copied into the image lives there forever.
+
+.venv/
+.venv*/
+.git/
+.github/
+
+__pycache__/
+**/__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Old build / assignment material — not part of the running app
+archive/
+
+# Live run outputs — regenerated at runtime
+reports/
+TESTING/
+docs/screenshots/
+*.session.json
+
+# Reference repos — clone these locally, don't bake into the image
+inspirations/
+
+# Editor / OS junk
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Secrets — explicitly excluded; HF Spaces injects via env vars
+.env
+.env.*
+.streamlit/secrets.toml
+
+# Stray screenshots / one-off files at root
+*.png
+*.jpg
+*.jpeg
+*.log
+*.tmp
+
+# Built docs we don't need at runtime (reports already exclude this dir's outputs)
+docs/HypothesisLoop_Presentation.pptx
+
+# Bytecode / dist artifacts
+*.egg-info/
+build/
+dist/

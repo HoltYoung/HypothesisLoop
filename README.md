@@ -1,3 +1,15 @@
+---
+title: HypothesisLoop
+emoji: ◐
+colorFrom: blue
+colorTo: cyan
+sdk: docker
+app_port: 7860
+pinned: false
+license: mit
+short_description: Autonomous Hypothesize → Experiment → Evaluate → Learn agent
+---
+
 # HypothesisLoop
 
 **QAC387-01 · Wesleyan · Spring 2026**
