@@ -85,7 +85,7 @@ def _check_ascii_identifiers(code: str) -> Optional[str]:
     """
     try:
         tokens = list(tokenize.generate_tokens(io.StringIO(code).readline))
-    except (tokenize.TokenizeError, IndentationError, SyntaxError):
+    except (tokenize.TokenError, IndentationError, SyntaxError):
         return None
     for tok in tokens:
         if tok.type == tokenize.NAME and any(ord(c) > 127 for c in tok.string):
