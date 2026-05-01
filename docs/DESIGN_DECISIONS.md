@@ -28,7 +28,7 @@ Append, don't edit. Each entry: date, decision, alternatives considered, why, tr
 **Decision:** `moonshot-v1-128k` is the default model for all steps; `gpt-4o-mini` is the documented fallback, selectable via `--model gpt-4o-mini` or `HL_MODEL` env var.
 
 **Alternatives considered:**
-- Claude Opus 4.6 (per original proposal) — abandoned for cost.
+- The frontier reasoning model originally specified in the proposal — abandoned for cost.
 - All-OpenAI (4o-mini for all steps) — workable but loses Kimi's 128K context advantage for long traces.
 - Split: Kimi for hypothesize+evaluate, 4o-mini for experiment codegen — deferred until we benchmark codegen quality.
 
@@ -210,6 +210,42 @@ declared intent.
 **Trade-off:** `HL_MODEL_DEFAULT` now lives in two places (`dispatch.py` and `cli.py`). If a future contributor changes the default in `dispatch.py`, they must also update `cli.py`. A sync-comment flags this. Risk is low (the default rarely changes) and the alternative was worse.
 
 **Owner:** Builder, Phase 8.
+
+---
+
+## 2026-04-30 — Predict-mode CV measurement lives in Evaluate, not ExperimentStep
+
+**Decision:** In Predict mode, the proxy-model cross-validation measurement
+that drives the deterministic accept/reject decision happens inside
+``Evaluate.__call__`` (when ``predict_state`` is non-None), not inside
+``ExperimentStep``. ExperimentStep still owns codegen, sandbox execution,
+and the new target-leakage check.
+
+**Alternatives considered:**
+- (a) Spec sketch — put CV measurement in ExperimentStep. Cleaner if you read
+  "experiment = the whole evaluation pipeline." But it forces ExperimentStep
+  to reach across into the trace's running ``train_df`` AND know about
+  metric thresholds, which couples it to Predict-mode internals.
+- (b) Add a fourth step (``measure_predict``) to the loop. Clean separation
+  but invasive: requires a new callable in ``run_loop`` and mode-conditional
+  loop logic.
+
+**Why:** Evaluate already has the LLM-call-and-override pattern (it
+synthesizes the LLM-prose-reason while the deterministic threshold check
+overrides the LLM's decision). The CV measurement is part of "deciding
+whether this hypothesis was confirmed" — it belongs in the same step as the
+decision. ExperimentStep stays narrowly focused on safety
+(AST denylist + ASCII lint + leakage check + sandbox), which made the
+retry-on-leakage path a one-liner via the existing ``blocked_reason``
+machinery.
+
+**Trade-off:** Evaluate now does double duty in Predict mode (LLM call +
+in-process CV via ``exec``). The exec path is safe because the same code
+already passed the AST denylist + leakage check inside ExperimentStep — but
+it does mean Evaluate carries a slightly larger blast radius than its
+single-responsibility name suggests. Documented in the module docstring.
+
+**Owner:** Builder, Phase 9.
 
 ---
 

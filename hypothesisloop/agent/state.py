@@ -15,8 +15,11 @@ from pathlib import Path
 from typing import Literal, Optional
 
 
-TestType = Literal["correlation", "group_diff", "regression", "distribution", "custom"]
+TestType = Literal["correlation", "group_diff", "regression", "distribution", "custom", "classification"]
 Decision = Literal["confirmed", "rejected", "inconclusive", "invalid"]
+LoopMode = Literal["explore", "predict"]
+TaskType = Literal["classification", "regression"]
+MetricName = Literal["roc_auc", "log_loss", "r2"]
 
 
 def _utc_iso() -> str:
@@ -48,6 +51,23 @@ class Hypothesis:
     embedding: list[float] = field(default_factory=list)
     re_explore: bool = False
     created_at: str = field(default_factory=_utc_iso)
+    # Predict-mode optional fields. Explore-mode hypotheses leave these None.
+    predicted_metric_delta: Optional[float] = None
+    feature_op: Optional[str] = None  # "create:<name>" | "drop:<name>" | "transform:<name>" | "derive:<name>"
+
+
+@dataclass
+class EngineeredFeature:
+    """One accepted-or-rejected feature engineering operation (Predict mode)."""
+
+    name: str
+    code: str
+    iteration_added: int
+    hypothesis_id: str
+    predicted_delta: float
+    actual_delta: float
+    accepted: bool
+    rejection_reason: Optional[str] = None
 
 
 @dataclass
@@ -156,6 +176,11 @@ class DAGTrace:
         dataset_path: Path | str,
         question: str,
         schema_summary: str = "",
+        *,
+        mode: LoopMode = "explore",
+        target_column: Optional[str] = None,
+        task_type: Optional[TaskType] = None,
+        metric_name: Optional[MetricName] = None,
     ):
         self.session_id: str = session_id
         self.dataset_path: str = str(dataset_path)
@@ -168,6 +193,14 @@ class DAGTrace:
         # Hypotheses the novelty gate rejected — kept out of the DAG but
         # surfaced in subsequent prompts so the LLM doesn't re-propose them.
         self.novelty_rejected: list[Hypothesis] = []
+        # Predict-mode state. ``mode == "explore"`` leaves these untouched.
+        self.mode: LoopMode = mode
+        self.target_column: Optional[str] = target_column
+        self.task_type: Optional[TaskType] = task_type
+        self.metric_name: Optional[MetricName] = metric_name
+        self.baseline_score: Optional[float] = None
+        self.current_best_score: Optional[float] = None
+        self.engineered_features: list[EngineeredFeature] = []
 
     # ---- mutation -------------------------------------------------------
     def add_node(self, hypothesis: Hypothesis) -> TraceNode:
@@ -263,6 +296,14 @@ class DAGTrace:
             "children": {nid: list(kids) for nid, kids in self._children.items()},
             "order": list(self._order),
             "novelty_rejected": [asdict(h) for h in self.novelty_rejected],
+            # Phase 9 — Predict-mode state. Loaders default these for back-compat.
+            "mode": self.mode,
+            "target_column": self.target_column,
+            "task_type": self.task_type,
+            "metric_name": self.metric_name,
+            "baseline_score": self.baseline_score,
+            "current_best_score": self.current_best_score,
+            "engineered_features": [asdict(f) for f in self.engineered_features],
         }
 
     @classmethod
@@ -272,7 +313,16 @@ class DAGTrace:
             dataset_path=d["dataset_path"],
             question=d["question"],
             schema_summary=d.get("schema_summary", ""),
+            mode=d.get("mode", "explore"),
+            target_column=d.get("target_column"),
+            task_type=d.get("task_type"),
+            metric_name=d.get("metric_name"),
         )
+        trace.baseline_score = d.get("baseline_score")
+        trace.current_best_score = d.get("current_best_score")
+        trace.engineered_features = [
+            EngineeredFeature(**f) for f in d.get("engineered_features", [])
+        ]
         # Restore the original timestamp (don't re-stamp).
         trace.created_at = d.get("created_at", trace.created_at)
         for node_dict in d.get("nodes", []):
@@ -302,7 +352,11 @@ class DAGTrace:
 __all__ = [
     "TestType",
     "Decision",
+    "LoopMode",
+    "TaskType",
+    "MetricName",
     "Hypothesis",
+    "EngineeredFeature",
     "ExperimentAttempt",
     "Experiment",
     "HypothesisFeedback",

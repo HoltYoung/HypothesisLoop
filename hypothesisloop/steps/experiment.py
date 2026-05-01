@@ -27,6 +27,7 @@ from typing import Any, Optional
 from dotenv import load_dotenv
 from jinja2 import Template
 
+from hypothesisloop.agent.leakage import check_no_target_leakage
 from hypothesisloop.agent.state import (
     Experiment as ExperimentRecord,
     ExperimentAttempt,
@@ -45,6 +46,9 @@ load_dotenv(override=True)
 
 _DEFAULT_PROMPT_PATH = (
     Path(__file__).resolve().parents[1] / "prompts" / "experiment.j2"
+)
+_PREDICT_PROMPT_PATH = (
+    Path(__file__).resolve().parents[1] / "prompts" / "experiment_predict.j2"
 )
 _RETRY_TAIL_CAP = 1500
 
@@ -131,10 +135,13 @@ class ExperimentStep:
         dataset_path: Path | str,
         schema_summary: str,
         prompt_path: Optional[Path | str] = None,
+        predict_prompt_path: Optional[Path | str] = None,
         max_retries: int = 3,
         timeout_s: int = 30,
         ram_mb: int = 1024,
         seed: int = 42,
+        mode: str = "explore",
+        target_column: Optional[str] = None,
     ):
         self.llm = llm
         self.session_root = Path(session_root)
@@ -146,11 +153,21 @@ class ExperimentStep:
         if prompt_path is None:
             prompt_path = _DEFAULT_PROMPT_PATH
         self.prompt_template = Template(Path(prompt_path).read_text(encoding="utf-8"))
+        if predict_prompt_path is None:
+            predict_prompt_path = _PREDICT_PROMPT_PATH
+        try:
+            self.predict_prompt_template = Template(
+                Path(predict_prompt_path).read_text(encoding="utf-8")
+            )
+        except FileNotFoundError:
+            self.predict_prompt_template = None
 
         self.max_retries = max_retries
         self.timeout_s = timeout_s
         self.ram_mb = ram_mb
         self.seed = seed
+        self.mode = mode
+        self.target_column = target_column
 
     # ---- public entry --------------------------------------------------
     def __call__(self, hypothesis: Hypothesis) -> ExperimentRecord:
@@ -171,6 +188,12 @@ class ExperimentStep:
             # subprocess + sandbox cost. Counts as one attempt against the
             # retry budget so the next call sees the lint error.
             ascii_error = _check_ascii_identifiers(llm_code)
+            leakage_error = (
+                check_no_target_leakage(llm_code, self.target_column)
+                if (self.mode == "predict" and self.target_column)
+                else None
+            )
+
             if ascii_error is not None:
                 sandbox_result = SandboxResult(
                     exit_code=0,
@@ -179,6 +202,18 @@ class ExperimentStep:
                     figures=[],
                     metrics={},
                     blocked_reason=f"lint: {ascii_error}",
+                    duration_s=0.0,
+                    timed_out=False,
+                    oom_killed=False,
+                )
+            elif leakage_error is not None:
+                sandbox_result = SandboxResult(
+                    exit_code=0,
+                    stdout="",
+                    stderr=leakage_error,
+                    figures=[],
+                    metrics={},
+                    blocked_reason=f"leakage: {leakage_error}",
                     duration_s=0.0,
                     timed_out=False,
                     oom_killed=False,
@@ -234,12 +269,22 @@ class ExperimentStep:
         prior_code: Optional[str],
         last_error_summary: Optional[str],
     ) -> str:
-        rendered = self.prompt_template.render(
+        # Predict mode uses a tighter template that names the target column +
+        # forbids referencing it. Falls back to the explore template if the
+        # predict template wasn't bundled (e.g. test harnesses).
+        use_predict = (
+            self.mode == "predict"
+            and self.predict_prompt_template is not None
+            and self.target_column
+        )
+        template = self.predict_prompt_template if use_predict else self.prompt_template
+        rendered = template.render(
             hypothesis=hypothesis.__dict__,
             dataset_path=str(self.dataset_path),
             schema_summary=self.schema_summary,
             prior_code=prior_code,
             last_error_summary=last_error_summary,
+            target_column=self.target_column or "",
         )
         response = self.llm.invoke(rendered)
         raw = _content_of(response)

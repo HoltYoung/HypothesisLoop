@@ -35,6 +35,7 @@ land in Phase 7; Streamlit UI is Phase 8.
 - Phase 6 complete: HITL CLI with `--auto`, `--resume`, per-iteration redirect.
 - Phase 7 complete: bias scanner + Markdown/plain-text report generator (auto-rendered at end of every run).
 - Phase 8 complete: Streamlit UI with mission-control theme.
+- Phase 9 complete: Predict mode (feature engineering loop + AutoGluon ensemble) + per-call cost tracker + UI overhaul.
 
 ## Install
 
@@ -80,6 +81,47 @@ for `[c]ontinue / [s]top / [r]edirect <text>`.
 ```bash
 python -m hypothesisloop.cli --auto --question "..." --max-iters 5
 ```
+
+### Predict mode
+
+Drives the loop to engineer features for a target column and trains an
+AutoGluon ensemble at the end:
+
+```bash
+python -m hypothesisloop.cli --mode predict --data data/adult.csv \
+    --target income --auto --max-iters 5 --automl-time-budget 120
+```
+
+After each iteration the loop:
+
+1. proposes a feature operation (`create:<name>` / `transform:<name>` / etc.),
+2. checks for target leakage + ASCII identifiers,
+3. runs the code in the sandbox,
+4. CV-scores the engineered DataFrame with a proxy model (LogReg / Ridge),
+5. accepts the feature deterministically iff CV improvement ≥ threshold.
+
+When the loop finishes, AutoGluon trains an ensemble on the engineered
+training split and evaluates on the held-out test split. Outputs land in
+`reports/<session-id>/`:
+
+- `leaderboard.csv` — model leaderboard
+- `feature_importance.csv` — SHAP-style importances from AG
+- `automl_summary.json` — best model, test score, time budget
+- `model/` — AutoGluon's `TabularPredictor` on disk
+
+### Configuring providers
+
+Default provider/model: Moonshot Kimi K2.6 (`moonshot-v1-128k`). Switch via
+`--model gpt-4o-mini`, `--provider openai`, or `--api-key` (overrides env).
+Set keys in `.env`:
+
+```ini
+KIMI_API_KEY=...               # or MOONSHOT_API_KEY
+OPENAI_API_KEY=sk-...
+```
+
+The Streamlit UI exposes a Provider radio + API-key field; entered keys are
+held only in the in-memory Streamlit session.
 
 ### Resume a saved run
 

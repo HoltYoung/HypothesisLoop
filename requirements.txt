@@ -1,5 +1,6 @@
 annotated-types==0.7.0
 anyio==4.12.1
+autogluon.tabular>=1.1,<2.0
 asttokens==3.0.1
 backoff==2.2.1
 certifi==2026.1.4

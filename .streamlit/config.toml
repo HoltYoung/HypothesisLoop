@@ -1,0 +1,14 @@
+[server]
+maxUploadSize = 2000          # MB; effectively no cap for CSVs
+maxMessageSize = 2000
+
+[theme]
+base = "dark"                 # so the dark-mode chrome that does leak through is at least dark
+backgroundColor = "#0F172A"
+secondaryBackgroundColor = "#1E293B"
+textColor = "#E2E8F0"
+primaryColor = "#06B6D4"
+font = "monospace"
+
+[browser]
+gatherUsageStats = false

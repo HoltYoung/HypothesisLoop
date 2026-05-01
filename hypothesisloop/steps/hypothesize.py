@@ -30,13 +30,16 @@ load_dotenv(override=True)
 _DEFAULT_PROMPT_PATH = (
     Path(__file__).resolve().parents[1] / "prompts" / "hypothesize.j2"
 )
+_PREDICT_PROMPT_PATH = (
+    Path(__file__).resolve().parents[1] / "prompts" / "hypothesize_predict.j2"
+)
 _TestTypeLiteral = Literal[
-    "correlation", "group_diff", "regression", "distribution", "custom"
+    "correlation", "group_diff", "regression", "distribution", "custom", "classification"
 ]
 
 
 class HypothesisDraft(BaseModel):
-    """LLM-boundary validator. Not part of the persisted state schema."""
+    """Explore-mode LLM-boundary validator."""
 
     statement: str
     null: str
@@ -47,6 +50,13 @@ class HypothesisDraft(BaseModel):
     concise_observation: str
     concise_justification: str
     concise_knowledge: str
+
+
+class PredictHypothesisDraft(HypothesisDraft):
+    """Predict-mode draft — adds metric-delta commitment + feature operation."""
+
+    predicted_metric_delta: float
+    feature_op: str
 
 
 def _bind_json(llm: Any) -> Any:
@@ -91,6 +101,7 @@ class Hypothesize:
         llm: Any,
         retriever: Callable[[str], list[dict]],
         prompt_path: Path | str = _DEFAULT_PROMPT_PATH,
+        predict_prompt_path: Path | str = _PREDICT_PROMPT_PATH,
         rag_k: int = 4,
         scheduler: Any = None,
         pruner: Any = None,
@@ -100,14 +111,23 @@ class Hypothesize:
         self.rag_k = rag_k
         self.scheduler = scheduler
         self.pruner = pruner
-        prompt_path = Path(prompt_path)
+
+        explore_path = Path(prompt_path)
+        predict_path = Path(predict_prompt_path)
+        # Both templates live under hypothesisloop/prompts/, so a single Jinja2
+        # environment with that directory as its loader root suffices.
         env = Environment(
-            loader=FileSystemLoader(str(prompt_path.parent)),
+            loader=FileSystemLoader(str(explore_path.parent)),
             undefined=StrictUndefined,
             trim_blocks=False,
             lstrip_blocks=False,
         )
-        self._template = env.get_template(prompt_path.name)
+        self._template = env.get_template(explore_path.name)
+        try:
+            self._predict_template = env.get_template(predict_path.name)
+        except Exception:
+            # Predict template optional during tests that mock the explore path.
+            self._predict_template = None
         # Stash the most recently rendered prompt so tests can inspect it.
         self.last_prompt: Optional[str] = None
 
@@ -126,6 +146,20 @@ class Hypothesize:
             prior_hypotheses = self._build_priors_no_pruner(trace)
             rejected_hypotheses = self._build_rejected_no_pruner(trace)
 
+        if getattr(trace, "mode", "explore") == "predict" and self._predict_template is not None:
+            return self._predict_template.render(
+                dataset_path=trace.dataset_path,
+                target_column=trace.target_column or "",
+                task_type=trace.task_type or "classification",
+                metric_name=trace.metric_name or "roc_auc",
+                baseline_score=trace.baseline_score if trace.baseline_score is not None else 0.0,
+                current_best_score=trace.current_best_score if trace.current_best_score is not None else 0.0,
+                schema_summary=trace.schema_summary or "_(schema not yet profiled)_",
+                rag_chunks=rag_chunks,
+                engineered_features=list(trace.engineered_features),
+                injected_redirect=injected_redirect,
+                iteration_idx=iteration_idx,
+            )
         return self._template.render(
             dataset_path=trace.dataset_path,
             question=trace.question,
@@ -203,9 +237,15 @@ class Hypothesize:
             raise RuntimeError(
                 f"hypothesize: LLM output is not valid JSON ({e}). Raw output:\n{raw!r}"
             ) from e
-        draft = HypothesisDraft.model_validate(payload)
 
-        return Hypothesis(
+        is_predict = getattr(trace, "mode", "explore") == "predict"
+        draft = (
+            PredictHypothesisDraft.model_validate(payload)
+            if is_predict
+            else HypothesisDraft.model_validate(payload)
+        )
+
+        hyp = Hypothesis(
             id=new_hypothesis_id(),
             parent_id=(parent.id if parent is not None else None),
             iteration=iteration_idx,
@@ -219,6 +259,10 @@ class Hypothesize:
             concise_justification=draft.concise_justification,
             concise_knowledge=draft.concise_knowledge,
         )
+        if is_predict:
+            hyp.predicted_metric_delta = float(draft.predicted_metric_delta)  # type: ignore[attr-defined]
+            hyp.feature_op = str(draft.feature_op)  # type: ignore[attr-defined]
+        return hyp
 
 
-__all__ = ["Hypothesize", "HypothesisDraft"]
+__all__ = ["Hypothesize", "HypothesisDraft", "PredictHypothesisDraft"]

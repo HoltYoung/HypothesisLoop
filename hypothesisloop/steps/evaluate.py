@@ -10,7 +10,9 @@ from dotenv import load_dotenv
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 from pydantic import BaseModel, Field, ValidationError
 
+from hypothesisloop.agent.predict_score import cv_score, is_improvement
 from hypothesisloop.agent.state import (
+    EngineeredFeature,
     Experiment,
     Hypothesis,
     HypothesisFeedback,
@@ -100,6 +102,7 @@ class Evaluate:
         *,
         llm: Any,
         prompt_path: Path | str = _DEFAULT_PROMPT_PATH,
+        predict_state: Optional[dict] = None,
     ):
         self.llm = _bind_json(llm)
         prompt_path = Path(prompt_path)
@@ -111,6 +114,11 @@ class Evaluate:
         )
         self._template = env.get_template(prompt_path.name)
         self.last_prompt: Optional[str] = None
+        # Predict mode hook. When non-None, ``__call__`` overrides the LLM's
+        # decision based on a CV proxy score and mutates the shared state.
+        # Expected keys: trace, train_df, target_column, task_type,
+        # metric_name, prev_score, seed.
+        self.predict_state = predict_state
 
     def _render(self, hypothesis: Hypothesis, experiment: Experiment) -> str:
         return self._template.render(
@@ -142,7 +150,7 @@ class Evaluate:
             ) from e
         draft = FeedbackDraft.model_validate(payload)
 
-        return HypothesisFeedback(
+        feedback = HypothesisFeedback(
             hypothesis_id=hypothesis.id,
             decision=draft.decision,
             reason=draft.reason,
@@ -150,6 +158,113 @@ class Evaluate:
             novel_subhypotheses=list(draft.novel_subhypotheses),
             confidence=float(draft.confidence),
         )
+
+        # Predict mode: override the LLM's decision with a deterministic
+        # threshold check on the proxy CV delta.
+        if self.predict_state is not None:
+            try:
+                _apply_predict_decision(feedback, hypothesis, experiment, self.predict_state)
+            except Exception as exc:  # pragma: no cover — surface but don't crash the loop
+                feedback.decision = "invalid"
+                feedback.reason = (
+                    f"{feedback.reason}\n\n[predict-eval failed: "
+                    f"{type(exc).__name__}: {exc}]"
+                )
+                feedback.confidence = 0.0
+
+        return feedback
+
+
+def _apply_predict_decision(
+    feedback: HypothesisFeedback,
+    hypothesis: Hypothesis,
+    experiment: Experiment,
+    state: dict,
+) -> None:
+    """Run CV on engineered df, override decision, mutate state if accepted."""
+    import pandas as pd
+
+    # If the experiment failed, mark invalid — no CV to run.
+    if not experiment.succeeded or not experiment.attempts:
+        feedback.decision = "invalid"
+        feedback.observations = (
+            (feedback.observations or "")
+            + f"\n[predict] experiment did not succeed; no CV measurement."
+        )
+        return
+
+    code = experiment.attempts[-1].code
+    train_df: pd.DataFrame = state["train_df"]
+    target_column: str = state["target_column"]
+    task_type: str = state["task_type"]
+    metric_name: str = state["metric_name"]
+    prev_score = state["prev_score"]
+    seed: int = state.get("seed", 42)
+
+    # Apply the LLM's code to a fresh copy of the current best train_df.
+    # The sandbox already verified the code runs without crashing; we re-execute
+    # in-process here so the engineered df survives for CV scoring.
+    new_df = train_df.copy()
+    local_ns = {
+        "df": new_df,
+        "pd": __import__("pandas"),
+        "np": __import__("numpy"),
+        "hl_emit": lambda k, v: None,
+    }
+    try:
+        exec(compile(code, "<feature-engineering>", "exec"), local_ns, local_ns)
+    except Exception as exc:
+        feedback.decision = "invalid"
+        feedback.observations = (
+            (feedback.observations or "")
+            + f"\n[predict] in-process re-exec failed: {type(exc).__name__}: {exc}"
+        )
+        return
+    new_df = local_ns.get("df", new_df)
+
+    # CV-score the engineered df.
+    new_score = cv_score(
+        new_df,
+        target_column=target_column,
+        task_type=task_type,  # type: ignore[arg-type]
+        metric_name=metric_name,  # type: ignore[arg-type]
+        seed=seed,
+    )
+    accepted, delta = is_improvement(prev_score, new_score)
+
+    feedback.decision = "confirmed" if accepted else "rejected"
+    feedback.observations = (
+        f"[predict] {metric_name} prev={prev_score.value:.4f}, "
+        f"new={new_score.value:.4f}, delta={delta:+.4f}, "
+        f"predicted={hypothesis.predicted_metric_delta:+.4f}, "
+        f"accepted={accepted}\n"
+        + (feedback.observations or "")
+    )
+
+    # Trace mutation. The shared trace is in state["trace"] so that we can
+    # update engineered_features and current_best_score atomically with the
+    # decision override.
+    trace = state.get("trace")
+    feature_name = (hypothesis.target_columns[0] if hypothesis.target_columns else "<unknown>")
+    if trace is not None:
+        trace.engineered_features.append(
+            EngineeredFeature(
+                name=feature_name,
+                code=code,
+                iteration_added=hypothesis.iteration,
+                hypothesis_id=hypothesis.id,
+                predicted_delta=float(hypothesis.predicted_metric_delta or 0.0),
+                actual_delta=float(delta),
+                accepted=bool(accepted),
+                rejection_reason=(None if accepted else f"delta {delta:+.4f} below threshold"),
+            )
+        )
+
+    if accepted:
+        state["train_df"] = new_df
+        state["prev_score"] = new_score
+        if trace is not None:
+            trace.current_best_score = float(new_score.value)
 
 
 __all__ = ["Evaluate", "FeedbackDraft"]

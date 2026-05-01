@@ -98,6 +98,29 @@ def test_inject_css_includes_data_state_animation(monkeypatch):
     assert '[data-state="complete"]' in blob
 
 
+def test_streamlit_app_exposes_provider_models_table():
+    """Phase 9 — provider-radio drives the model-dropdown choices."""
+    import importlib
+
+    if "hypothesisloop.ui.streamlit_app" in __import__("sys").modules:
+        del __import__("sys").modules["hypothesisloop.ui.streamlit_app"]
+    mod = importlib.import_module("hypothesisloop.ui.streamlit_app")
+    pm = getattr(mod, "PROVIDER_MODELS", None)
+    assert isinstance(pm, dict)
+    assert set(pm.keys()) == {"moonshot", "openai"}
+    assert "moonshot-v1-128k" in pm["moonshot"]
+    assert "gpt-4o-mini" in pm["openai"]
+
+
+def test_decision_card_classes_cover_all_decisions():
+    """Phase 9 — every decision the UI may render maps to a defined class."""
+    from hypothesisloop.ui.theme import DECISION_BADGE_CLASS, DECISION_CARD_CLASS
+
+    decisions = {"confirmed", "rejected", "inconclusive", "invalid", "pending"}
+    assert decisions.issubset(set(DECISION_CARD_CLASS.keys()))
+    assert decisions.issubset(set(DECISION_BADGE_CLASS.keys()))
+
+
 def test_factory_build_steps_returns_dict(tmp_path: Path):
     """build_steps wires every component when the RAG index exists."""
     project_root = Path(__file__).resolve().parents[1]

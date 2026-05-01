@@ -127,6 +127,41 @@ def _build_argparser() -> argparse.ArgumentParser:
         action="store_true",
         help="Re-render report.md and report.txt from a saved trace; requires --resume.",
     )
+    # Phase 9 — Predict-mode flags.
+    p.add_argument(
+        "--mode",
+        choices=["explore", "predict"],
+        default="explore",
+        help="Loop mode (default: explore).",
+    )
+    p.add_argument(
+        "--target",
+        default=None,
+        help="Target column name (Predict mode only; required when --mode=predict).",
+    )
+    p.add_argument(
+        "--task-type",
+        choices=["classification", "regression", "auto"],
+        default="auto",
+        help="Predict-mode task type (default: auto-detected from target dtype).",
+    )
+    p.add_argument(
+        "--provider",
+        choices=["openai", "moonshot"],
+        default=None,
+        help="Override provider routing (default: inferred from --model prefix).",
+    )
+    p.add_argument(
+        "--api-key",
+        default=None,
+        help="Runtime API key override (rare — usually set via .env).",
+    )
+    p.add_argument(
+        "--automl-time-budget",
+        type=int,
+        default=120,
+        help="AutoGluon time budget in seconds (Predict mode; default: 120).",
+    )
     return p
 
 
@@ -269,30 +304,56 @@ def _load_or_create_trace(args):
         df = pd.read_csv(trace.dataset_path)
         return trace, session_root, df
 
-    if not args.question:
-        raise SystemExit(
-            "--question is required for non-resume, non-smoke-test runs."
-        )
+    if args.mode == "predict":
+        if not args.target:
+            raise SystemExit("--mode=predict requires --target <column>.")
+        # Predict-mode: question text is auxiliary; default if absent.
+        question = args.question or f"Predict {args.target}"
+    else:
+        if not args.question:
+            raise SystemExit(
+                "--question is required for non-resume, non-smoke-test runs."
+            )
+        question = args.question
+
     session_id = args.session_id or _gen_session_id()
     session_root = Path(args.output_dir) / session_id
     session_root.mkdir(parents=True, exist_ok=True)
 
     df = pd.read_csv(args.data)
     schema = profile_dataset(df, dataset_path=args.data)
+
+    task_type = None
+    metric_name = None
+    if args.mode == "predict":
+        if args.target not in df.columns:
+            raise SystemExit(
+                f"--target {args.target!r} not in dataset columns: {sorted(df.columns)}"
+            )
+        if args.task_type == "auto":
+            from hypothesisloop.steps.baseline import auto_metric_for, auto_task_type
+
+            task_type = auto_task_type(df[args.target])
+            metric_name = auto_metric_for(task_type)
+        else:
+            task_type = args.task_type
+            metric_name = "roc_auc" if task_type == "classification" else "r2"
+
     trace = DAGTrace(
         session_id=session_id,
         dataset_path=str(Path(args.data).resolve()),
-        question=args.question,
+        question=question,
         schema_summary=schema,
+        mode=args.mode,
+        target_column=(args.target if args.mode == "predict" else None),
+        task_type=task_type,
+        metric_name=metric_name,
     )
     return trace, session_root, df
 
 
-def _build_steps(args, trace, session_root):
-    """Thin wrapper over :func:`hypothesisloop.agent.factory.build_steps`.
-
-    Returns the same tuple shape ``_run`` already expects.
-    """
+def _build_steps(args, trace, session_root, *, tracker=None, predict_state=None):
+    """Thin wrapper over :func:`hypothesisloop.agent.factory.build_steps`."""
     from hypothesisloop.agent.factory import build_steps
 
     components = build_steps(
@@ -303,6 +364,9 @@ def _build_steps(args, trace, session_root):
         rag_index_path=args.rag_index,
         rag_chunks_path=args.rag_chunks,
         rag_k=args.rag_k,
+        api_key=args.api_key,
+        tracker=tracker,
+        predict_state=predict_state,
     )
     return (
         components["hypothesize_fn"],
@@ -318,20 +382,57 @@ def _run(args) -> int:
     """Real-run path. Wraps the loop in @observe so step spans nest under one trace."""
     # Lazy-load — the loop, hitl, report, langfuse all live behind this function.
     from hypothesisloop.agent.loop import run_loop
+    from hypothesisloop.llm.cost_tracker import CostTracker
     from hypothesisloop.steps.report import render_report
     from hypothesisloop.trace.langfuse_client import observe, start_session
     from hypothesisloop.ui.hitl import hitl_prompt, print_run_summary
 
     random.seed(args.seed)
 
-    trace, session_root, _df = _load_or_create_trace(args)
+    trace, session_root, df = _load_or_create_trace(args)
     print(f"[hypothesisloop] session_id = {trace.session_id}", file=sys.stderr)
     print(f"[hypothesisloop] artifacts  -> {session_root}", file=sys.stderr)
+    if trace.mode == "predict":
+        print(
+            f"[hypothesisloop] mode       = predict (target={trace.target_column}, "
+            f"task={trace.task_type}, metric={trace.metric_name})",
+            file=sys.stderr,
+        )
 
     start_session(trace.session_id)
 
+    tracker = CostTracker()
+
+    # Predict mode: run iter-0 baseline before the loop. The shared
+    # ``predict_state`` dict gives Evaluate the train_df + prev_score it
+    # needs to compute deterministic accept/reject deltas.
+    predict_state = None
+    automl_input: dict | None = None
+    if trace.mode == "predict":
+        from hypothesisloop.steps.baseline import run_baseline
+
+        baseline = run_baseline(trace, df, seed=args.seed)
+        print(
+            f"[hypothesisloop] baseline   = {trace.metric_name}={baseline.baseline_cv.value:.4f} "
+            f"({baseline.baseline_cv.n_folds}-fold CV)",
+            file=sys.stderr,
+        )
+        predict_state = {
+            "trace": trace,
+            "train_df": baseline.train_df,
+            "target_column": trace.target_column,
+            "task_type": trace.task_type,
+            "metric_name": trace.metric_name,
+            "prev_score": baseline.baseline_cv,
+            "seed": args.seed,
+        }
+        automl_input = {
+            "train_df_baseline": baseline.train_df,
+            "test_df": baseline.test_df,
+        }
+
     hyp_fn, exp_fn, eval_fn, nov_fn, scheduler, safety_fn = _build_steps(
-        args, trace, session_root
+        args, trace, session_root, tracker=tracker, predict_state=predict_state
     )
     hitl_fn = None if args.auto else hitl_prompt
 
@@ -366,6 +467,53 @@ def _run(args) -> int:
             trace.save(session_root / "trace.json")
         except Exception as e:
             print(f"[hypothesisloop] trace save failed: {e}", file=sys.stderr)
+
+        # Predict mode: run AutoGluon on the engineered train_df + held-out
+        # test split, write leaderboard + feature_importance + summary JSON.
+        # Failure here is loud but non-fatal — the report still renders.
+        if trace.mode == "predict" and predict_state is not None and automl_input is not None:
+            try:
+                from hypothesisloop.automl.autogluon_runner import (
+                    run_automl,
+                    write_automl_summary,
+                )
+
+                print(
+                    f"[hypothesisloop] AutoGluon training "
+                    f"(time_budget={args.automl_time_budget}s)...",
+                    file=sys.stderr,
+                )
+                # The shared predict_state["train_df"] now contains every
+                # accepted engineered feature; the test split was reserved at
+                # baseline and didn't see any of it.
+                summary = run_automl(
+                    train_df=predict_state["train_df"],
+                    test_df=automl_input["test_df"],
+                    target_column=trace.target_column,
+                    task_type=trace.task_type,
+                    output_dir=session_root,
+                    time_budget_s=args.automl_time_budget,
+                    seed=args.seed,
+                )
+                write_automl_summary(summary, session_root)
+                print(
+                    f"[hypothesisloop] AutoGluon test {summary['test_metric']}="
+                    f"{summary['test_score']:.4f} ({summary['best_model']})",
+                    file=sys.stderr,
+                )
+            except ImportError as e:
+                print(
+                    f"[hypothesisloop] AutoGluon unavailable: {e}. "
+                    "The proxy CV ledger in the report still reflects "
+                    "feature engineering decisions.",
+                    file=sys.stderr,
+                )
+            except Exception as e:
+                print(
+                    f"[hypothesisloop] AutoGluon training failed: "
+                    f"{type(e).__name__}: {e}",
+                    file=sys.stderr,
+                )
 
         try:
             result = render_report(

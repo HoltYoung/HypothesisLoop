@@ -19,6 +19,7 @@ from hypothesisloop.agent.novelty import NoveltyChecker
 from hypothesisloop.agent.pruner import Pruner
 from hypothesisloop.agent.scheduler import LinearScheduler
 from hypothesisloop.agent.state import DAGTrace
+from hypothesisloop.llm.cost_tracker import CostTracker
 from hypothesisloop.llm.dispatch import get_llm
 from hypothesisloop.llm.embed import embed_text
 from hypothesisloop.primitives.rag import load_index, retrieve
@@ -37,6 +38,10 @@ def build_steps(
     rag_index_path: str | Path = "knowledge/rag.index",
     rag_chunks_path: str | Path = "knowledge/rag_chunks.pkl",
     rag_k: int = 4,
+    api_key: str | None = None,
+    api_base: str | None = None,
+    tracker: CostTracker | None = None,
+    predict_state: dict | None = None,
 ) -> dict[str, Any]:
     """Construct every callable + helper the loop needs.
 
@@ -48,9 +53,15 @@ def build_steps(
     correct dataset path / schema) and the shared scheduler (so HITL
     redirects from the front-end land in the next ``Hypothesize`` call).
     """
-    llm_hyp = get_llm(model=model, temperature=0.7)
-    llm_exp = get_llm(model=model, temperature=0.7)  # codegen also creative-ish
-    llm_eval = get_llm(model=model, temperature=0.3)
+    llm_hyp = get_llm(
+        model=model, temperature=0.7, api_key=api_key, api_base=api_base, tracker=tracker
+    )
+    llm_exp = get_llm(
+        model=model, temperature=0.7, api_key=api_key, api_base=api_base, tracker=tracker
+    )
+    llm_eval = get_llm(
+        model=model, temperature=0.3, api_key=api_key, api_base=api_base, tracker=tracker
+    )
 
     index, chunks = load_index(rag_index_path, rag_chunks_path)
 
@@ -73,8 +84,10 @@ def build_steps(
         dataset_path=trace.dataset_path,
         schema_summary=trace.schema_summary,
         seed=seed,
+        mode=trace.mode,
+        target_column=trace.target_column,
     )
-    evaluate_fn = Evaluate(llm=llm_eval)
+    evaluate_fn = Evaluate(llm=llm_eval, predict_state=predict_state)
     novelty_fn = NoveltyChecker(embed_fn=embed_text)
 
     return {

@@ -131,6 +131,10 @@ def _render_markdown(
         _section_limitations(trace),
         _section_reproduction(trace, cli_command=cli_command, seed=seed),
     ]
+    # Predict-mode sections appear at the end so Explore-mode reports stay
+    # exactly as they were before Phase 9.
+    if getattr(trace, "mode", "explore") == "predict":
+        sections.append(_section_predictive_modeling(trace))
     return "\n\n".join(s.rstrip() for s in sections)
 
 
@@ -481,6 +485,132 @@ def _truncate(text: str, n: int) -> str:
     if len(text) <= n:
         return text
     return text[: n - 1].rstrip() + "…"
+
+
+def _section_predictive_modeling(trace: DAGTrace) -> str:
+    """Predict-mode appendix: baseline → engineered features → AutoGluon."""
+    parts = ["## 10. Predictive modeling"]
+
+    parts.append(
+        f"\n- **Target column:** `{trace.target_column}`"
+        f"\n- **Task:** {trace.task_type}"
+        f"\n- **Metric:** {trace.metric_name}"
+        f"\n- **Baseline (no engineering):** "
+        f"{trace.baseline_score:.4f}" if trace.baseline_score is not None else "—"
+    )
+    if trace.current_best_score is not None:
+        delta = (
+            (trace.current_best_score - trace.baseline_score)
+            if trace.baseline_score is not None
+            else None
+        )
+        parts.append(
+            f"- **Best after feature engineering:** {trace.current_best_score:.4f}"
+            + (f" (Δ={delta:+.4f} vs. baseline)" if delta is not None else "")
+        )
+
+    accepted = [f for f in trace.engineered_features if f.accepted]
+    rejected = [f for f in trace.engineered_features if not f.accepted]
+    parts.append(f"- **Engineered features:** {len(accepted)} accepted, {len(rejected)} rejected")
+
+    if trace.engineered_features:
+        parts.append("")
+        parts.append("### Feature engineering ledger")
+        parts.append("")
+        parts.append(
+            "| iter | name | op | predicted Δ | actual Δ | kept |"
+        )
+        parts.append("|---|---|---|---|---|---|")
+        for f in trace.engineered_features:
+            parts.append(
+                f"| {f.iteration_added} | `{f.name}` | "
+                f"{_md_escape((_get_op_for_feature(trace, f) or '—'))} | "
+                f"{f.predicted_delta:+.4f} | {f.actual_delta:+.4f} | "
+                f"{'✅' if f.accepted else '❌'} |"
+            )
+
+    # AutoGluon section — populated if a leaderboard is on disk next to the report.
+    automl_summary = _load_automl_summary_for_trace(trace)
+    if automl_summary:
+        parts.append("")
+        parts.append("### AutoGluon ensemble")
+        parts.append("")
+        parts.append(
+            f"- **Time budget:** {automl_summary.get('time_budget_s', '—')}s"
+            f"\n- **Best model:** `{automl_summary.get('best_model', '—')}`"
+            f"\n- **Test {automl_summary.get('test_metric', 'score')}:** "
+            f"{float(automl_summary.get('test_score', 0.0)):.4f}"
+            f"\n- **Model artifacts:** `{automl_summary.get('model_dir', '—')}`"
+        )
+        leaderboard = automl_summary.get("leaderboard") or []
+        if leaderboard:
+            parts.append("")
+            parts.append("#### Leaderboard (top 5)")
+            parts.append("")
+            keys = ["model", "score_test", "score_val", "fit_time", "pred_time_test"]
+            present_keys = [k for k in keys if any(k in row for row in leaderboard)]
+            parts.append("| " + " | ".join(present_keys) + " |")
+            parts.append("|" + "|".join(["---"] * len(present_keys)) + "|")
+            for row in leaderboard[:5]:
+                cells = []
+                for k in present_keys:
+                    v = row.get(k, "")
+                    if isinstance(v, float):
+                        cells.append(f"{v:.4f}")
+                    else:
+                        cells.append(_md_escape(str(v)))
+                parts.append("| " + " | ".join(cells) + " |")
+        importance = automl_summary.get("feature_importance") or []
+        importance = [r for r in importance if not r.get("_error")]
+        if importance:
+            parts.append("")
+            parts.append("#### Feature importance (top 10)")
+            parts.append("")
+            keys = list(importance[0].keys())
+            parts.append("| " + " | ".join(keys) + " |")
+            parts.append("|" + "|".join(["---"] * len(keys)) + "|")
+            for row in importance[:10]:
+                cells = []
+                for k in keys:
+                    v = row.get(k, "")
+                    if isinstance(v, float):
+                        cells.append(f"{v:.4f}")
+                    else:
+                        cells.append(_md_escape(str(v)))
+                parts.append("| " + " | ".join(cells) + " |")
+    else:
+        parts.append("")
+        parts.append(
+            "_AutoGluon ensemble was not run in this session "
+            "(or the summary file was unavailable). The feature ledger above "
+            "still reflects the proxy-model CV decisions._"
+        )
+
+    return "\n".join(parts)
+
+
+def _get_op_for_feature(trace: DAGTrace, feature) -> Optional[str]:
+    """Look up the originating hypothesis to fetch the feature_op string."""
+    for node in trace.iter_nodes():
+        if node.hypothesis.id == feature.hypothesis_id:
+            return node.hypothesis.feature_op
+    return None
+
+
+def _load_automl_summary_for_trace(trace: DAGTrace) -> Optional[dict]:
+    """Best-effort: look for ``automl_summary.json`` next to the trace's session_root."""
+    import json
+
+    candidates = [
+        Path("reports") / trace.session_id / "automl_summary.json",
+    ]
+    for c in candidates:
+        if c.exists():
+            try:
+                return json.loads(c.read_text(encoding="utf-8"))
+            except Exception:
+                return None
+    return None
 
 
 def _md_escape(text: str) -> str:

@@ -51,6 +51,14 @@ def _ns(**overrides) -> argparse.Namespace:
         rag_index="knowledge/rag.index",
         rag_chunks="knowledge/rag_chunks.pkl",
         rag_k=4,
+        report_only=False,
+        # Phase 9 flags
+        mode="explore",
+        target=None,
+        task_type="auto",
+        provider=None,
+        api_key=None,
+        automl_time_budget=120,
     )
     base.update(overrides)
     return argparse.Namespace(**base)

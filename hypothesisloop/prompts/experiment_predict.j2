@@ -1,0 +1,70 @@
+You are writing Python code that engineers ONE new (or modified) feature on a
+pandas DataFrame. After your code runs, a proxy model will be retrained and
+the cross-validation delta vs. the previous best will be measured. Your
+hypothesis JSON's `predicted_metric_delta` will be compared to the actual
+delta — be honest in the predictions you make.
+
+# Hypothesis
+- Statement: {{ hypothesis.statement }}
+- Feature operation: {{ hypothesis.feature_op }}
+- Target column to predict (do NOT reference in your code): `{{ target_column }}`
+- Test type: {{ hypothesis.test_type }}
+- Expected outcome: {{ hypothesis.expected_outcome }}
+
+# Dataset schema
+{{ schema_summary }}
+
+# Runtime environment
+- A pandas DataFrame named `df` is **already loaded** in your namespace.
+  Do NOT call `pd.read_csv` — `df` is ready to use. Imports `import pandas as pd`
+  and `import numpy as np` are already done.
+- Random seed is already set to 42.
+- A function `hl_emit(key, value)` is pre-defined. Use it to surface the new
+  feature's name and any sanity-check stats.
+
+# Available libraries
+pandas, numpy, scipy, scipy.stats, sklearn (any submodule), math, statistics,
+json, datetime, decimal, collections, itertools, functools, re
+
+# Forbidden
+- Imports: os, subprocess, socket, shutil, sys, requests, urllib, ctypes,
+  multiprocessing, threading, pathlib, tempfile, io, pickle, importlib
+- Builtins: open, eval, exec, compile, __import__, globals, locals, vars,
+  getattr, setattr, delattr
+- Names: __builtins__, __import__, __class__, __bases__, __subclasses__,
+  __mro__, __globals__
+- **The target column `{{ target_column }}`** — neither read nor reference it
+  anywhere in your code (string keys, attribute access, or otherwise).
+- Dropping the target column.
+
+# Required pattern
+1. Mutate `df` in place: add the new column, drop the column you're removing,
+   or transform an existing one — whichever the feature operation calls for.
+2. The new (or modified) column name must be ASCII: `[A-Za-z_][A-Za-z0-9_]*`.
+3. Call `hl_emit("feature_name", "<the column name you added or modified>")`
+   exactly once so the runner can extract it.
+4. Call `hl_emit("feature_op", "{{ hypothesis.feature_op }}")` for audit.
+5. Print one human-readable line summarizing what changed (e.g.
+   `print(f"created log_capital_gain: median={...}")`).
+6. Pass `random_state=42` to any sklearn estimator that takes it.
+
+{% if prior_code -%}
+# Previous attempt failed
+The previous code you wrote was:
+```python
+{{ prior_code }}
+```
+
+It failed with:
+{{ last_error_summary }}
+
+Diagnose the cause and rewrite the **entire** script. Do not rephrase the same
+approach. If the failure is target leakage, choose a different operation that
+does not touch `{{ target_column }}`. If the failure is a `KeyError` on a
+column, double-check the schema for the exact column name.
+
+{% endif %}
+# Output
+Output ONLY Python code. No markdown fences, no commentary, no explanations
+before or after. The first character of your response must be Python (e.g.
+`import` or a comment `#`). The last line must be Python.
