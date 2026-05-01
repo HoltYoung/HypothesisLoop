@@ -60,6 +60,23 @@ functools, re
    `from scipy import stats`, `import matplotlib.pyplot as plt` — write the
    imports explicitly even if you "think" they're already in scope. Forgetting
    `import scipy` or `import sklearn.X` is the second most common failure mode.
+9. **No variable shadowing of pre-loaded names.** NEVER reassign `df`, `pd`,
+   `np`, `plt`, `sns`, or any pre-imported library to a new value. Use unique
+   names: `degrees_of_freedom` (not `df`), `n_groups`, `result_df`,
+   `model_full`, `prediction`, etc. Overwriting `df` is a common silent bug —
+   later code looks like it's using the dataframe but is actually using a
+   scalar.
+10. **Use library implementations for non-trivial statistics.** For tests like
+    likelihood-ratio, mixed-effects, GLMs, time-series, or anything beyond a
+    basic t-test/correlation/chi-squared, **call `scipy.stats` or
+    `statsmodels`** — do not roll your own statistic from scratch. Hand-rolled
+    LRT / Wald / Hosmer-Lemeshow implementations are almost always wrong.
+11. **Statistical vs practical significance.** With n > 5,000 (the Adult
+    dataset has 32,561 rows), p-values become trivially small even for
+    negligible effects. Always emit BOTH p-value AND a standardized effect
+    size (Cohen's d, eta-squared, Cramer's V, partial η²). The evaluator will
+    rank a tiny effect with a small p-value as `inconclusive`, not
+    `confirmed`, so don't overstate the result in your `print` summary.
 {% if prior_code %}
 
 # Previous attempt failed

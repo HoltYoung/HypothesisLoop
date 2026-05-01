@@ -15,13 +15,33 @@ causation** — the dataset is observational. Use words like "associates with",
 {{ experiment_summary }}
 
 # Decision rules
-- `confirmed` — the test ran cleanly and the evidence supports the alternative
-  hypothesis (typically p < 0.05 AND effect size is non-trivial).
+- `confirmed` — the test ran cleanly AND the evidence supports the alternative,
+  with **both** a small p-value AND a non-trivial effect size.
 - `rejected` — the test ran cleanly and the evidence does not support the alternative.
 - `inconclusive` — the test ran but the evidence is genuinely ambiguous (borderline
-  p, near-zero effect, very small sample, etc.).
+  p, **near-zero effect with statistically-significant p driven by huge n**, very small
+  sample, conflicting signals, etc.).
 - `invalid` — the script failed, blew up, was blocked by the sandbox, or used a test
   whose assumptions were so violated that the output cannot be trusted.
+
+# CRITICAL: practical vs statistical significance
+
+The Adult dataset has n = 32,561. With sample sizes that large, p-values become
+trivially small even for negligible effects. **Use effect-size thresholds to
+decide, not p-value alone:**
+
+| Effect size metric | Trivial (use `inconclusive`) | Small | Medium | Large |
+|---|---|---|---|---|
+| Cohen's d            | < 0.2  | 0.2–0.5  | 0.5–0.8  | > 0.8  |
+| Pearson's r          | < 0.1  | 0.1–0.3  | 0.3–0.5  | > 0.5  |
+| eta² / partial η²    | < 0.01 | 0.01–0.06| 0.06–0.14| > 0.14 |
+| Cramer's V           | < 0.1  | 0.1–0.3  | 0.3–0.5  | > 0.5  |
+| Cliff's delta (abs)  | < 0.11 | 0.11–0.28| 0.28–0.43| > 0.43 |
+
+If the effect size is in the "Trivial" column, set `decision="inconclusive"`
+and explain in `reason` that the p-value is small only because n is huge —
+the actual effect is too small to be practically meaningful. Do NOT confirm
+trivial-effect hypotheses just because p < 0.05.
 
 # Output
 Return a single JSON object — no extra keys, no prose before or after, no markdown

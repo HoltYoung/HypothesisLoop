@@ -102,6 +102,38 @@ If a hypothesis confirms with p<0.001 but a Cohen's d of 0.05, the honest
 report is: **statistically detectable, practically negligible.** Don't
 overstate the result.
 
+## Library implementations — do not roll your own
+
+For anything beyond a basic t-test / chi-squared / correlation, use the canonical
+library. Hand-rolled statistics are almost always wrong.
+
+- **Likelihood-ratio test** (nested logistic regressions): use `statsmodels`,
+  NOT your own formula.
+
+  ```python
+  import statsmodels.api as sm
+  from scipy import stats
+  full = sm.GLM(y, sm.add_constant(X_full), family=sm.families.Binomial()).fit()
+  reduced = sm.GLM(y, sm.add_constant(X_reduced), family=sm.families.Binomial()).fit()
+  lr_stat = 2 * (full.llf - reduced.llf)
+  df_diff = full.df_model - reduced.df_model
+  p_value = stats.chi2.sf(lr_stat, df_diff)
+  ```
+
+  An LRT is **NOT** the sum of squared differences between predicted
+  probabilities. That is mathematically meaningless.
+
+- **ANOVA (multi-way):** `statsmodels.formula.api.ols` + `statsmodels.stats.anova_lm`.
+- **Logistic regression:** `statsmodels.api.Logit` or `sklearn.linear_model.LogisticRegression`.
+- **GLM beyond logistic:** `statsmodels.api.GLM` with the appropriate family
+  (Poisson, Gamma, Negative Binomial).
+- **Mixed-effects:** `statsmodels.formula.api.mixedlm`.
+- **Bootstrap CIs:** `scipy.stats.bootstrap`.
+- **Mediation/moderation:** `statsmodels` or `pingouin`.
+
+If you're tempted to implement a statistic from a textbook formula, **check the
+library first.** Correctness > performance in this loop.
+
 ## Quick decision recipe
 
 1. What is the **outcome variable**? Continuous → t/ANOVA/regression

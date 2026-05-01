@@ -10,7 +10,12 @@ from dotenv import load_dotenv
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 from pydantic import BaseModel, Field, ValidationError
 
-from hypothesisloop.agent.predict_score import cv_score, is_improvement
+from hypothesisloop.agent.predict_score import (
+    cv_score,
+    is_improvement,
+    is_suspicious_jump,
+    is_suspiciously_perfect,
+)
 from hypothesisloop.agent.state import (
     EngineeredFeature,
     Experiment,
@@ -67,6 +72,11 @@ def _format_experiment_summary(experiment: Experiment) -> str:
 
     Pulls from ``experiment.final_attempt`` because retries land in the same
     attempts list and the tail attempt is the result the LLM should judge.
+
+    Per Sam's audit fix #6: metrics from ``hl_emit`` are labeled with
+    interpretation hints so the evaluator stops asking for stats it already
+    has. Common keys (``p_value``, ``effect_size``, ``n``) get explicit
+    callouts so the LLM treats them as the headline numbers.
     """
     attempt = experiment.final_attempt
     if attempt is None:
@@ -83,7 +93,31 @@ def _format_experiment_summary(experiment: Experiment) -> str:
     parts.append(f"attempts: {len(experiment.attempts)}")
 
     if attempt.metrics:
-        parts.append("metrics: " + json.dumps(attempt.metrics, default=str))
+        # Headline numbers, surfaced explicitly. The evaluator was asking
+        # for these even when they were emitted; labeling makes them
+        # impossible to miss.
+        m = attempt.metrics
+        labeled_lines = []
+        if "p_value" in m:
+            labeled_lines.append(f"  - p_value: {m['p_value']}")
+        for key in ("effect_size", "cohens_d", "eta_squared", "cramers_v",
+                    "pearson_r", "r2", "cliffs_delta", "odds_ratio"):
+            if key in m:
+                labeled_lines.append(f"  - {key}: {m[key]}")
+        if "n" in m:
+            labeled_lines.append(f"  - n: {m['n']}")
+        # Anything else
+        leftover = {
+            k: v for k, v in m.items()
+            if k not in {"p_value", "effect_size", "cohens_d", "eta_squared",
+                         "cramers_v", "pearson_r", "r2", "cliffs_delta",
+                         "odds_ratio", "n"}
+        }
+        if labeled_lines:
+            parts.append("\nKey metrics (these ARE the effect size and p-value the decision rules expect):")
+            parts.extend(labeled_lines)
+        if leftover:
+            parts.append("Other metrics: " + json.dumps(leftover, default=str))
 
     parts.append(f"\nstdout (last {_TAIL_CAP} chars):\n{_tail(attempt.stdout)}")
     parts.append(f"\nstderr (last {_TAIL_CAP} chars):\n{_tail(attempt.stderr)}")
@@ -230,9 +264,61 @@ def _apply_predict_decision(
         metric_name=metric_name,  # type: ignore[arg-type]
         seed=seed,
     )
+
+    # Sam's audit fix #3: catch implausibly perfect scores or implausibly
+    # large jumps that the AST denylist missed (indirect target leakage
+    # through derived columns, etc.).
+    perfect_flag, perfect_reason = is_suspiciously_perfect(new_score)
+    jump_flag, jump_reason = is_suspicious_jump(prev_score, new_score)
+    if perfect_flag or jump_flag:
+        suspicion = perfect_reason or jump_reason
+        feedback.decision = "invalid"
+        feedback.confidence = 0.0
+        # Sam's audit fix #5: rewrite the LLM's reason so it matches the
+        # actual outcome instead of pretending the test was inconclusive
+        # for a different reason.
+        feedback.reason = (
+            f"Suspected indirect target leakage: {suspicion} The proxy "
+            f"CV would normally accept this feature, but the score is too "
+            f"good to be real and the engineered feature most likely "
+            f"contains target information."
+        )
+        feedback.observations = (
+            f"[predict] {metric_name} prev={prev_score.value:.4f}, "
+            f"new={new_score.value:.4f}, "
+            f"flagged_as_leakage=true\n"
+            + (feedback.observations or "")
+        )
+        return  # don't accept; don't update best score
+
     accepted, delta = is_improvement(prev_score, new_score)
 
-    feedback.decision = "confirmed" if accepted else "rejected"
+    # Sam's audit fix #5: rewrite reason and observations so the
+    # deterministic decision and the prose actually agree. The previous
+    # behavior left the LLM's "cannot confirm without effect size" text
+    # paired with a deterministic CONFIRMED / REJECTED tag, which read as
+    # a contradiction.
+    threshold_str = f"{0.001:.4f}" if metric_name != "r2" else f"{0.005:.4f}"
+    if accepted:
+        feedback.decision = "confirmed"
+        feedback.reason = (
+            f"Feature accepted by the proxy CV. The 5-fold {metric_name} moved "
+            f"from {prev_score.value:.4f} → {new_score.value:.4f} "
+            f"(delta = {delta:+.4f}, threshold = +{threshold_str}, predicted = "
+            f"{(hypothesis.predicted_metric_delta or 0):+.4f}). The improvement "
+            f"clears the acceptance threshold; the feature is added to the "
+            f"engineered set for the AutoGluon final."
+        )
+    else:
+        feedback.decision = "rejected"
+        feedback.reason = (
+            f"Feature rejected by the proxy CV. The 5-fold {metric_name} moved "
+            f"from {prev_score.value:.4f} → {new_score.value:.4f} "
+            f"(delta = {delta:+.4f}, threshold = +{threshold_str}, predicted = "
+            f"{(hypothesis.predicted_metric_delta or 0):+.4f}). The change is "
+            f"below the acceptance threshold; the feature is logged for the "
+            f"audit ledger but not added to the engineered set."
+        )
     feedback.observations = (
         f"[predict] {metric_name} prev={prev_score.value:.4f}, "
         f"new={new_score.value:.4f}, delta={delta:+.4f}, "

@@ -38,6 +38,16 @@ The user has redirected this iteration. Honor this guidance verbatim:
 > {{ injected_redirect }}
 
 {% endif %}
+{% if engineered_features|length >= 3 -%}
+# Diversity check — propose a fundamentally different angle
+You've already proposed {{ engineered_features|length }} features. Don't
+repeatedly propose variations on the same column (e.g. four versions of
+``log_capital_loss`` is one variation, not four). Switch to a different
+column, a different operation (interaction, ratio, binning, datetime
+extraction), or a different mathematical form. Re-proposing close variants
+of prior features will be rejected as duplicates by the novelty gate.
+
+{% endif %}
 {% if prior_failures and prior_failures|length > 0 -%}
 # Recent code failures — avoid these patterns
 Recent feature-engineering code has crashed with the errors below. When you

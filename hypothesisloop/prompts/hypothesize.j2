@@ -36,6 +36,15 @@ You are on **iteration {{ iteration_idx }}**. Below are prior hypotheses with th
 {% for r in rejected_hypotheses %}
 - "{{ r.statement }}" — {{ r.rejection_reason }}
 {% endfor %}
+{% if rejected_hypotheses|length >= 3 %}
+
+**You have already had {{ rejected_hypotheses|length }} hypotheses rejected as
+duplicates of prior work. Pick a fundamentally different angle now** — switch
+to different columns, a different test type (correlation → group comparison,
+group comparison → distribution, etc.), or a different framing of what
+"interesting" means in this dataset. Re-proposing close variations of
+previously-rejected ideas wastes an iteration budget slot.
+{% endif %}
 {% endif %}
 
 **Propose something distinct.** Do not re-test confirmed findings; do not rephrase

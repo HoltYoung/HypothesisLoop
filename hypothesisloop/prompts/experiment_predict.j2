@@ -60,6 +60,20 @@ json, datetime, decimal, collections, itertools, functools, re
 9. **Always import what you use.** Even if you think it's already in scope, write
    `import pandas as pd`, `import numpy as np`, `from scipy import stats` etc.
    explicitly. Missing imports is a top-3 failure mode.
+10. **No variable shadowing of pre-loaded names.** NEVER reassign `df`, `pd`,
+    `np`, `plt`. The proxy CV step assumes `df` is the engineered dataframe;
+    overwriting it with a scalar or sub-frame is a silent bug.
+11. **No `_` placeholders in `train_test_split` if you'll need that variable.**
+    If you call `train_test_split`, capture all four returns explicitly:
+    `X_train, X_test, y_train, y_test = train_test_split(...)`. Do NOT
+    discard outputs with `_` and then reference `y_train`/`y_test` from
+    outer scope — those won't exist and will silently use stale values.
+12. **You do not need to train a model in this script.** Your job is to
+    create/drop/transform/derive ONE column on `df`. The proxy CV step runs
+    automatically AFTER your code completes, on the modified `df`. Writing
+    your own `RandomForestClassifier(...).fit(...)` call is wasted compute
+    AND a common source of `y_train` scope bugs and ROC=1.0 leakage. Just
+    mutate `df` and emit the feature_name + feature_op via `hl_emit`.
 
 {% if prior_code -%}
 # Previous attempt failed

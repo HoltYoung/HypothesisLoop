@@ -68,6 +68,16 @@ class NoveltyChecker:
             self.config.decayed_threshold if in_decay else self.config.base_threshold
         )
 
+        # Sam's audit fix #11: hard escalation. If we've rejected 5+ in a row
+        # the loop is starving — better to accept a near-duplicate (with
+        # re_explore=True) than to burn the whole iteration budget on
+        # rejections. The agent will still see prior_hypotheses in the
+        # rendered prompt and try to differentiate.
+        if self._consecutive_rejections >= 5:
+            hypothesis.re_explore = True
+            self._consecutive_rejections = 0
+            return True
+
         # 6. Apply gate. Strict ``<`` — at exactly threshold, reject.
         if max_sim < threshold:
             if in_decay:

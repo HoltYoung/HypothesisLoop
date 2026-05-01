@@ -541,6 +541,17 @@ def _render_main() -> None:
             unsafe_allow_html=True,
         )
 
+    # Sam's audit fix #10: off-topic question banner — surfaces above the
+    # iteration cards so the user knows the question may not match the dataset.
+    if s.get("question_offtopic"):
+        st.markdown(
+            f'<div class="hl-bias-chip" style="border-color:#FBBF24;color:#FDE68A;'
+            f'background:rgba(251,191,36,0.08);">'
+            f'⚠ <b>Off-topic question.</b> {s.get("question_offtopic_reason", "")}'
+            f'</div>',
+            unsafe_allow_html=True,
+        )
+
     if s.last_error:
         st.error(s.last_error)
 
@@ -641,18 +652,57 @@ def _render_iteration_card(node) -> None:
             st.markdown("**stderr**")
             st.code(last.stderr or "(empty)", language=None)
     with tabs[2]:
-        numeric_metrics = {
-            k: float(v) for k, v in (last.metrics or {}).items() if _is_plot_safe(v)
-        }
-        if numeric_metrics:
-            st.bar_chart(numeric_metrics)
-        else:
+        # Sam's audit fix #9: drop the bar chart that compared heterogeneous
+        # quantities (n=32561 dwarfing p_value=0.005). Render as a labeled
+        # table instead, with category hints.
+        m = last.metrics or {}
+        if not m:
             st.markdown(
-                '<div class="hl-empty">no numeric metrics emitted</div>',
+                '<div class="hl-empty">no metrics emitted</div>',
                 unsafe_allow_html=True,
             )
-        if last.metrics:
-            st.json(last.metrics)
+        else:
+            _METRIC_CATEGORIES = {
+                "p_value":       ("p-value",            "smaller is more significant"),
+                "effect_size":   ("effect size",        "magnitude of the relationship"),
+                "cohens_d":      ("Cohen's d",          "small=0.2 · medium=0.5 · large=0.8"),
+                "eta_squared":   ("η²",                 "small=0.01 · medium=0.06 · large=0.14"),
+                "cramers_v":     ("Cramer's V",         "small=0.1 · medium=0.3 · large=0.5"),
+                "pearson_r":     ("Pearson r",          "small=0.1 · medium=0.3 · large=0.5"),
+                "r2":            ("R²",                 "fraction of variance explained"),
+                "cliffs_delta":  ("Cliff's delta",      "abs: small=0.11 · medium=0.28 · large=0.43"),
+                "odds_ratio":    ("odds ratio",         "OR=1 means no effect"),
+                "n":             ("sample size",        ""),
+                "n_male":        ("n (male)",           ""),
+                "n_female":      ("n (female)",         ""),
+                "feature_name":  ("feature created",    ""),
+                "feature_op":    ("feature op",         ""),
+            }
+            rows = []
+            for k, v in m.items():
+                label, hint = _METRIC_CATEGORIES.get(k, (k, ""))
+                if isinstance(v, float):
+                    if abs(v) < 0.001 and v != 0:
+                        v_fmt = f"{v:.2e}"
+                    else:
+                        v_fmt = f"{v:.4f}" if abs(v) < 1000 else f"{v:,.2f}"
+                elif isinstance(v, int):
+                    v_fmt = f"{v:,}"
+                else:
+                    v_fmt = str(v)
+                rows.append({"metric": label, "value": v_fmt, "interpretation": hint})
+            try:
+                import pandas as _pd
+                st.dataframe(
+                    _pd.DataFrame(rows),
+                    hide_index=True,
+                    use_container_width=True,
+                )
+            except Exception:
+                # Fallback if pandas display fails
+                for r in rows:
+                    st.markdown(f"- **{r['metric']}**: `{r['value']}`  · {r['interpretation']}")
+
         for fig_path_str in last.figures:
             fig_path = Path(fig_path_str)
             if fig_path.exists():
@@ -918,6 +968,37 @@ def _start_run(
         except Exception:
             pass
 
+    # Sam's audit fix #10: lightweight off-topic detector. Cheap heuristic —
+    # if the question references zero columns AND no statistical keywords,
+    # flag it as off-topic. Surfaces a banner; doesn't block the run.
+    s.question_offtopic = False
+    s.question_offtopic_reason = ""
+    if mode == "explore" and (trace.question or "").strip():
+        q_lower = (trace.question or "").lower()
+        col_terms = {c.lower() for c in df.columns}
+        col_terms |= {c.replace("_", " ").lower() for c in df.columns}
+        col_terms |= {c.replace("-", " ").lower() for c in df.columns}
+        # Strip very short tokens (e.g. "n", "id") that would false-positive.
+        col_terms = {c for c in col_terms if len(c) >= 3}
+        stat_keywords = {
+            "predict", "test", "correlat", "compar", "relationship", "differ",
+            "effect", "associat", "regress", "distribut", "outlier", "missing",
+            "trend", "cluster", "group", "mean", "median", "average", "ratio",
+            "rate", "proportion", "income", "data", "feature", "variable",
+            "column", "sample", "analysis", "analyze", "understand", "explore",
+            "what", "why", "how", "which", "explain",
+        }
+        col_hit = any(c in q_lower for c in col_terms)
+        kw_hit = any(k in q_lower for k in stat_keywords)
+        if not col_hit and not kw_hit:
+            s.question_offtopic = True
+            s.question_offtopic_reason = (
+                f"Your question doesn't reference any column from the dataset "
+                f"({len(df.columns)} columns: {', '.join(list(df.columns)[:5])}…) "
+                f"and doesn't contain statistical-analysis vocabulary. The agent "
+                f"will run anyway, but the results may not address what you asked."
+            )
+
     # Fix #1, #2, #3, #4: the run is driven from the bottom of the script via
     # `s.pending_iteration`, which gives the topbar/progress-bar a chance to
     # paint between iterations and ensures status indicators land in the main
@@ -1044,12 +1125,33 @@ def _complete() -> None:
             s.last_error = f"AutoGluon training failed: {type(e).__name__}: {e}"
 
     try:
+        # Sam's audit fix #8: pull live numbers from the in-process tracker
+        # so the report header matches what's been ticking in the sidebar
+        # all along. Langfuse rollup lags and returns zeros at this moment.
+        tracker_usage = None
+        tracker = s.get("cost_tracker")
+        if tracker is not None:
+            try:
+                wall_s = 0.0
+                if s.get("wall_start") is not None:
+                    wall_s = (datetime.now(timezone.utc) - s.wall_start).total_seconds()
+                tracker_usage = {
+                    "total_tokens":   tracker.total_tokens,
+                    "input_tokens":   sum(r.input_tokens for r in tracker.records),
+                    "output_tokens":  sum(r.output_tokens for r in tracker.records),
+                    "total_cost_usd": tracker.total_cost_usd,
+                    "wall_time_s":    wall_s,
+                    "trace_count":    tracker.total_calls,
+                }
+            except Exception:
+                tracker_usage = None
         render_report(
             s.trace,
             output_dir=s.session_root,
             format="both",
             cli_command="streamlit run hypothesisloop/ui/streamlit_app.py",
             seed=42,
+            usage_override=tracker_usage,
         )
     except Exception as e:
         s.last_error = f"report rendering failed: {e}"

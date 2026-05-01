@@ -205,10 +205,83 @@ def is_improvement(prev: CVScore, new: CVScore) -> tuple[bool, float]:
     return delta >= threshold, float(delta)
 
 
+# Per-metric thresholds for "this score is too good to be real, likely
+# leakage." A jump that big either means the LLM accidentally encoded the
+# target in the engineered feature, or the proxy CV had a bug. Either way,
+# the result shouldn't be trusted.
+SUSPICIOUS_JUMP_THRESHOLDS: dict[str, float] = {
+    "roc_auc":  0.05,    # +0.05 AUC in one feature is not real
+    "log_loss": 0.10,    # log_loss drop of 0.10 in one feature is not real
+    "r2":       0.10,    # +0.10 R² in one feature is suspicious
+}
+
+SUSPICIOUS_PERFECT_THRESHOLDS: dict[str, float] = {
+    "roc_auc":  0.999,   # 0.999+ on a real binary problem = leakage
+    "log_loss": 0.001,   # near-zero log_loss = leakage (lower is better)
+    "r2":       0.999,   # near-perfect R² on noisy data = leakage
+}
+
+
+def is_suspiciously_perfect(new: CVScore) -> tuple[bool, str]:
+    """Return ``(suspicious, reason)`` if ``new.value`` is implausibly good.
+
+    Designed to catch the case where an engineered feature trivially leaks
+    the target through some indirect path the AST denylist missed (e.g. a
+    feature derived from columns that are deterministic functions of the
+    target).
+    """
+    metric = new.metric_name
+    threshold = SUSPICIOUS_PERFECT_THRESHOLDS.get(metric)
+    if threshold is None:
+        return False, ""
+    if metric == "log_loss":
+        if new.value <= threshold:
+            return True, (
+                f"log_loss = {new.value:.4f} (≤ {threshold}) — suspiciously "
+                f"low; likely target leakage in the engineered feature."
+            )
+    else:
+        if new.value >= threshold:
+            return True, (
+                f"{metric} = {new.value:.4f} (≥ {threshold}) — suspiciously "
+                f"perfect score; likely target leakage in the engineered "
+                f"feature even though the AST scanner didn't catch it."
+            )
+    return False, ""
+
+
+def is_suspicious_jump(prev: CVScore, new: CVScore) -> tuple[bool, str]:
+    """Return ``(suspicious, reason)`` if delta is implausibly large.
+
+    A single feature engineering operation should not move the proxy CV
+    score by more than a few percentage points unless the feature is
+    leaking the target.
+    """
+    metric = new.metric_name
+    threshold = SUSPICIOUS_JUMP_THRESHOLDS.get(metric)
+    if threshold is None:
+        return False, ""
+    if metric == "log_loss":
+        delta = prev.value - new.value  # positive = improvement
+    else:
+        delta = new.value - prev.value  # positive = improvement
+    if delta >= threshold:
+        return True, (
+            f"{metric} delta = {delta:+.4f} (≥ {threshold}) — single "
+            f"feature shouldn't move the score this much; likely target "
+            f"leakage in the engineered feature."
+        )
+    return False, ""
+
+
 __all__ = [
     "ACCEPTANCE_THRESHOLDS",
+    "SUSPICIOUS_JUMP_THRESHOLDS",
+    "SUSPICIOUS_PERFECT_THRESHOLDS",
     "CVScore",
     "split_train_test",
     "cv_score",
     "is_improvement",
+    "is_suspiciously_perfect",
+    "is_suspicious_jump",
 ]

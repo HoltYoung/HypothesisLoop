@@ -517,12 +517,28 @@ def _run(args) -> int:
                 )
 
         try:
+            # Sam's audit fix #8: use the in-process CostTracker for the live
+            # report header rather than the lagging Langfuse session rollup.
+            # Tracker totals are accurate per-call; Langfuse can return zeros
+            # if the report renders before the SDK's batch flush.
+            try:
+                tracker_usage = {
+                    "total_tokens":   tracker.total_tokens,
+                    "input_tokens":   sum(r.input_tokens for r in tracker.records),
+                    "output_tokens":  sum(r.output_tokens for r in tracker.records),
+                    "total_cost_usd": tracker.total_cost_usd,
+                    "wall_time_s":    0.0,  # CLI doesn't track wall here; Streamlit does
+                    "trace_count":    tracker.total_calls,
+                }
+            except Exception:
+                tracker_usage = None
             result = render_report(
                 trace,
                 output_dir=session_root,
                 format="both",
                 cli_command=" ".join(sys.argv),
                 seed=args.seed,
+                usage_override=tracker_usage,
             )
             print(f"[hypothesisloop] report -> {result['md']}", file=sys.stderr)
             print(f"[hypothesisloop] report -> {result['txt']}", file=sys.stderr)
