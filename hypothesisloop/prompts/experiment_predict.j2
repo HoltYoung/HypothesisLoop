@@ -47,6 +47,19 @@ json, datetime, decimal, collections, itertools, functools, re
 5. Print one human-readable line summarizing what changed (e.g.
    `print(f"created log_capital_gain: median={...}")`).
 6. Pass `random_state=42` to any sklearn estimator that takes it.
+7. Prefer **stateless, row-wise** transforms over statistics computed across the dataframe.
+   - Good: `df['log_capital_gain'] = np.log(df['capital_gain'] + 1)`, `df['age_x_hours'] = df['age'] * df['hours_per_week']`, ratios, binning by fixed thresholds, datetime extractions.
+   - Bad (avoid): target encoding, mean-centering against `df.mean()`, z-scoring against `df.std()`, anything that uses `groupby` aggregations to compute statistics.
+   - Reason: this code is re-applied to a held-out test set later. Stateful transforms (statistics fit on one split, applied to another) cause silent quality drift.
+8. **Dtype discipline.** Check the schema above before any operation. Object/
+   string columns **must** be encoded to numeric (`.map({...})`,
+   `pd.get_dummies(...)`, or `LabelEncoder`) **before** `.mean()`, `.median()`,
+   `.isnan()`, arithmetic operators, or `np.log/sqrt/exp`. Adult-dataset traps:
+   `workclass`/`education`/`marital_status`/`occupation`/`relationship`/`race`/
+   `sex`/`native_country` are string-categorical; the target column may be too.
+9. **Always import what you use.** Even if you think it's already in scope, write
+   `import pandas as pd`, `import numpy as np`, `from scipy import stats` etc.
+   explicitly. Missing imports is a top-3 failure mode.
 
 {% if prior_code -%}
 # Previous attempt failed

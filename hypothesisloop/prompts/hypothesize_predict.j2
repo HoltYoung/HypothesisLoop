@@ -38,6 +38,19 @@ The user has redirected this iteration. Honor this guidance verbatim:
 > {{ injected_redirect }}
 
 {% endif %}
+{% if prior_failures and prior_failures|length > 0 -%}
+# Recent code failures — avoid these patterns
+Recent feature-engineering code has crashed with the errors below. When you
+propose this iteration's feature, **pick an operation that will not hit the
+same failure mode**. If the prior errors involve dtype mismatches, propose a
+feature that requires explicit encoding before any numeric op. If imports
+were missing, choose a transform using fewer libraries.
+
+{% for f in prior_failures %}
+- iter {{ f.iteration }}: `{{ f.error }}`{% if f.blocked_reason %} (blocked: {{ f.blocked_reason }}){% endif %}
+{% endfor %}
+
+{% endif %}
 
 # Iteration {{ iteration_idx }}
 Propose **one** feature-engineering operation that you predict will improve
@@ -50,6 +63,10 @@ operation, commit to a delta you expect.
 3. Commit to a numeric `predicted_metric_delta` (positive = improvement). Honest commitment: predict `0.001` if you're unsure, not `0.05`. Overpromising will hurt you on the next iteration's prompt.
 4. ASCII identifiers only. Match `[A-Za-z_][A-Za-z0-9_]*`.
 5. The operation must be one of: `create:<name>` / `drop:<name>` / `transform:<name>` / `derive:<name>`.
+6. Prefer **stateless, row-wise** transforms over statistics computed across the dataframe.
+   - Good: `df['log_capital_gain'] = np.log(df['capital_gain'] + 1)`, `df['age_x_hours'] = df['age'] * df['hours_per_week']`, ratios, binning by fixed thresholds, datetime extractions.
+   - Bad (avoid): target encoding, mean-centering against `df.mean()`, z-scoring against `df.std()`, anything that uses `groupby` aggregations to compute statistics.
+   - Reason: your code is re-applied to a held-out test set later. Stateful transforms (computing stats from one split, applying to another) cause silent quality drift.
 
 # Output
 Return a single JSON object — no extra keys, no commentary, no markdown fences:

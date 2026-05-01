@@ -146,6 +146,11 @@ class Hypothesize:
             prior_hypotheses = self._build_priors_no_pruner(trace)
             rejected_hypotheses = self._build_rejected_no_pruner(trace)
 
+        # Cross-iteration error context: pull the last 3 iterations' code
+        # failures so the LLM proactively avoids repeating dtype/import bugs
+        # across the run, not just within a single iteration's retries.
+        prior_failures = self._build_prior_failures(trace, k=3)
+
         if getattr(trace, "mode", "explore") == "predict" and self._predict_template is not None:
             return self._predict_template.render(
                 dataset_path=trace.dataset_path,
@@ -159,6 +164,7 @@ class Hypothesize:
                 engineered_features=list(trace.engineered_features),
                 injected_redirect=injected_redirect,
                 iteration_idx=iteration_idx,
+                prior_failures=prior_failures,
             )
         return self._template.render(
             dataset_path=trace.dataset_path,
@@ -169,7 +175,49 @@ class Hypothesize:
             rejected_hypotheses=rejected_hypotheses,
             injected_redirect=injected_redirect,
             iteration_idx=iteration_idx,
+            prior_failures=prior_failures,
         )
+
+    @staticmethod
+    def _build_prior_failures(trace: DAGTrace, k: int = 3) -> list[dict]:
+        """Pull the most informative stderr line from each failed attempt in
+        the last `k` iterations. Returns a flat list of dicts.
+
+        Shape per entry: {"iteration": int, "error": str, "blocked_reason": str|None}
+        """
+        out: list[dict] = []
+        order = list(trace._order)[-k:]
+        for node_id in order:
+            try:
+                node = trace.get(node_id)
+            except Exception:
+                continue
+            if node.experiment is None:
+                continue
+            for a in node.experiment.attempts:
+                if a.exit_code == 0 and not a.blocked_reason:
+                    continue
+                # Last meaningful stderr line — exception type + message.
+                err_line = ""
+                if a.stderr:
+                    for line in reversed(a.stderr.splitlines()):
+                        line = line.strip()
+                        if not line:
+                            continue
+                        # Exception lines look like "FooError: bar"
+                        if any(s in line for s in ("Error:", "Exception:", "Warning:")) or line[:1].isupper():
+                            err_line = line[:160]
+                            break
+                if not err_line and a.blocked_reason:
+                    err_line = f"blocked: {a.blocked_reason}"
+                if not err_line:
+                    err_line = f"exit_code={a.exit_code}"
+                out.append({
+                    "iteration": node.iteration,
+                    "error": err_line,
+                    "blocked_reason": a.blocked_reason,
+                })
+        return out
 
     @staticmethod
     def _build_priors_no_pruner(trace: DAGTrace) -> list[dict]:

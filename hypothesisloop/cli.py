@@ -492,6 +492,7 @@ def _run(args) -> int:
                     target_column=trace.target_column,
                     task_type=trace.task_type,
                     output_dir=session_root,
+                    engineered_features=trace.engineered_features,
                     time_budget_s=args.automl_time_budget,
                     seed=args.seed,
                 )

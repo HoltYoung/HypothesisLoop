@@ -70,8 +70,9 @@ def inject_css() -> None:
         }
 
         /* ---------- 3. Scope monospace, leave icons alone ---------- */
-        .stApp, .stApp *:not([class*="material-symbols"]):not([class*="material-icons"]):not([data-testid="stIconMaterial"]):not([data-testid="stIconMaterial"] *) {
-            font-family: "JetBrains Mono","Fira Code","SF Mono",Consolas,monospace;
+        html, body, .stApp,
+        .stApp *:not([class*="material-symbols"]):not([class*="material-icons"]):not([data-testid="stIconMaterial"]):not([data-testid="stIconMaterial"] *) {
+            font-family: "JetBrains Mono","Fira Code","SF Mono",Consolas,monospace !important;
         }
         [data-testid="stIconMaterial"],
         [class*="material-symbols"], [class*="material-icons"],
@@ -201,6 +202,47 @@ def inject_css() -> None:
         .hl-empty {
             color:#94A3B8; text-align:center; padding:1.5rem 1rem;
             font-size:0.9rem; letter-spacing:0.1em;
+        }
+
+        /* ---------- 16. Bias warning chip on iteration cards ---------- */
+        .hl-bias-chip {
+            background: rgba(248, 113, 113, 0.12);
+            border: 1px solid #F87171;
+            color: #FECACA;
+            padding: 8px 12px;
+            border-radius: 4px;
+            margin: 8px 0 0 0;
+            font-size: 12px;
+            line-height: 1.45;
+            letter-spacing: 0.02em;
+        }
+
+        /* ---------- 17. Main-area progress block (replaces sidebar st.status) ---------- */
+        .hl-progress-block {
+            background: #1E293B;
+            border: 1px solid #334155;
+            border-left: 3px solid #06B6D4;
+            border-radius: 4px;
+            padding: 12px 16px;
+            margin-bottom: 16px;
+        }
+        .hl-progress-label {
+            color: #06B6D4;
+            font-size: 11px;
+            letter-spacing: 0.12em;
+            margin-bottom: 6px;
+        }
+        .hl-progress-sub {
+            color: #94A3B8;
+            font-size: 11px;
+            margin-top: 6px;
+        }
+        /* Override Streamlit's stProgress bar to fit the dark theme */
+        [data-testid="stProgress"] > div > div > div {
+            background: #06B6D4 !important;
+        }
+        [data-testid="stProgress"] > div > div {
+            background: #0B1220 !important;
         }
         </style>
         """,

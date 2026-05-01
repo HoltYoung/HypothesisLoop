@@ -3,6 +3,11 @@
 **QAC387-01 · Wesleyan · Spring 2026**
 **Holt Young & Sam Penn**
 
+> **Status: shipped (2026-04-30).** All 10 build phases complete.
+> See `docs/FINAL_REPORT.md` for the writeup, `tests/validation_log.md`
+> for the 28-run validation suite, and `docs/langfuse_traces.md` for
+> representative trace URLs.
+
 HypothesisLoop is an LLM-powered agent that wraps the **scientific method** —
 Hypothesize → Experiment → Evaluate → Learn → Repeat — around a tabular dataset
 and runs autonomously for N iterations (default 5). The user supplies a CSV and
@@ -137,6 +142,20 @@ Outputs land in `reports/<session-id>/`:
 - `iter_<NNN>/attempt_<KK>/*.png` — generated figures
 
 For all flags, run `python -m hypothesisloop.cli --help`.
+
+### Reproducing the validation suite
+
+```bash
+python scripts/make_corrupted_adult.py        # builds data/adult_corrupted.csv
+python scripts/run_validation_suite.py --dry-run    # prints plan + cost
+python scripts/run_validation_suite.py --resume     # ~110 min wall, ~$2 in API
+python scripts/aggregate_validation.py              # rebuilds the markdown deliverables
+```
+
+The 28-run suite covers 8 Explore-mode prompt categories (3 reps each) +
+3 Predict-mode categories + 1 cross-dataset Predict run. See
+`tests/validation_log.md` for the full log + success metrics, and
+`docs/langfuse_traces.md` for representative trace URLs.
 
 ### Building / rebuilding the RAG index
 

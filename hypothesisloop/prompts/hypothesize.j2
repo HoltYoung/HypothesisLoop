@@ -49,6 +49,21 @@ The user has redirected the analysis. Honor this guidance verbatim:
 
 > {{ injected_redirect }}
 {% endif %}
+{% if prior_failures and prior_failures|length > 0 %}
+
+# Recent code failures — avoid these patterns
+The codegen step has crashed in recent iterations with the errors below. When
+you propose this iteration's hypothesis, **pick something that will not run
+into the same failure mode**. If the failure was a dtype error, propose a
+hypothesis whose test naturally requires explicit encoding before any numeric
+op. If the failure was a missing import, the experiment step's prompt now
+forces explicit imports, but pick a test that uses fewer libraries when in
+doubt.
+
+{% for f in prior_failures %}
+- iter {{ f.iteration }}: `{{ f.error }}`{% if f.blocked_reason %} (blocked: {{ f.blocked_reason }}){% endif %}
+{% endfor %}
+{% endif %}
 
 # Output
 Return a single JSON object matching this schema **exactly** — no extra keys, no

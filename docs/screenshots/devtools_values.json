@@ -1,0 +1,23 @@
+{
+  "url": "http://localhost:8505",
+  "explore_mode": {
+    "body_background": "rgb(15, 23, 42)",
+    "body_fontFamily": "\"Source Sans\", sans-serif, \"Source Sans\", sans-serif",
+    "brand_fontFamily": "\"JetBrains Mono\", \"Fira Code\", \"SF Mono\", Consolas, monospace",
+    "stat_fontFamily": "\"JetBrains Mono\", \"Fira Code\", \"SF Mono\", Consolas, monospace",
+    "brand_color": "rgb(6, 182, 212)",
+    "sidebar_background": "rgb(11, 18, 32)",
+    "iteration_card_present": false,
+    "deploy_button_display": "absent"
+  },
+  "openai_provider": {
+    "body_background": "rgb(15, 23, 42)",
+    "body_fontFamily": "\"Source Sans\", sans-serif, \"Source Sans\", sans-serif",
+    "brand_fontFamily": "\"JetBrains Mono\", \"Fira Code\", \"SF Mono\", Consolas, monospace",
+    "stat_fontFamily": "\"JetBrains Mono\", \"Fira Code\", \"SF Mono\", Consolas, monospace",
+    "brand_color": "rgb(6, 182, 212)",
+    "sidebar_background": "rgb(11, 18, 32)",
+    "iteration_card_present": false,
+    "deploy_button_display": "absent"
+  }
+}

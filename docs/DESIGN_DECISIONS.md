@@ -249,6 +249,72 @@ single-responsibility name suggests. Documented in the module docstring.
 
 ---
 
+## 2026-04-30 — FE propagation: re-execute feature code on test split at AutoGluon time
+
+**Decision:** Before AutoGluon training, every accepted ``EngineeredFeature``'s
+``code`` string is re-executed against the held-out ``test_df`` via the same
+``exec`` pattern used during in-loop CV. Failing features emit a
+``RuntimeWarning`` and are dropped from that split — the trace's record
+stays intact (a feature can succeed on ``train_df`` during the loop and
+fail on ``test_df`` here).
+
+**Alternatives considered:**
+- (a) Apply features once to a ``concat(train, test)`` before splitting —
+  introduces lookahead leakage for any stateful transform.
+- (b) Force LLM to write sklearn ``fit/transform`` pipelines — invasive
+  prompt rewrite, not class-scope appropriate.
+- (c) Keep ``train_df`` raw and apply features to both at AutoGluon time
+  only — cleaner long-term but a refactor of the Phase 9 loop.
+
+**Why:** Phase 9 shipped with engineered features applied to ``train_df``
+during the loop but never propagated to ``test_df``, making the AutoGluon
+leaderboard score meaningless. Re-execution is the smallest correct fix.
+Most LLM-generated FE code is stateless and idempotent, so re-running on
+both splits produces identical columns. The Predict-mode prompt now also
+instructs the LLM to prefer stateless row-wise transforms (rule #6/#7 in
+``hypothesize_predict.j2`` / ``experiment_predict.j2``).
+
+**Trade-off:** Stateful FE (target encoding, z-scoring against full-df
+stats) silently degrades quality when re-applied to ``test_df`` using only
+``test_df``'s own statistics. Documented as a known limitation; future
+work could move to sklearn-pipeline-style fit/transform.
+
+**Owner:** Builder, Phase 10A.
+
+---
+
+## 2026-04-30 — Drop ``[theme] font = "monospace"`` from .streamlit/config.toml
+
+**Decision:** Remove the ``font`` key from ``.streamlit/config.toml``.
+``hypothesisloop.ui.theme.inject_css`` owns the font stack via a Google
+Fonts ``@import`` + a ``font-family`` rule scoped to ``html, body, .stApp``.
+
+**Alternatives considered:**
+- (a) Keep the config-level ``font = "monospace"`` and hope it doesn't
+  fight the inject_css rule. Caught at headless-DevTools time —
+  ``getComputedStyle(document.body).fontFamily`` returned ``"Source Code
+  Pro", monospace`` (the OS default for ``font: monospace``), not
+  JetBrains Mono.
+- (b) Move font load into config.toml entirely. Streamlit's theme.font
+  doesn't accept Google Fonts ``@import`` directives.
+
+**Why:** Phase 10A's headless screenshot probe (``scripts/ui_screenshot.py``)
+caught that the body root was rendering in Source Code Pro / Source Sans.
+Removing the config-level font lets ``inject_css``'s ``@import url('.../JetBrains+Mono...')``
++ ``font-family: "JetBrains Mono", ...`` win cleanly on the visible UI
+elements (``.hl-brand``, ``.hl-stat code``, etc., now confirmed at
+``"JetBrains Mono", "Fira Code", "SF Mono", Consolas, monospace``).
+
+**Trade-off:** The bare ``<body>`` root still computes Source Sans because
+Streamlit's hard-coded body rule outranks any custom CSS without a
+shadow-DOM hack. Body is invisible behind ``.stApp``'s dark panel; user-
+visible text is all under ``.stApp`` and renders in JBM. Documented in the
+Phase 10A report.
+
+**Owner:** Builder, Phase 10A.
+
+---
+
 ## Template for future entries
 
 ```markdown

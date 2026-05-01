@@ -8,7 +8,9 @@ backgroundColor = "#0F172A"
 secondaryBackgroundColor = "#1E293B"
 textColor = "#E2E8F0"
 primaryColor = "#06B6D4"
-font = "monospace"
+# Font is set in hypothesisloop/ui/theme.py inject_css() via @import — leaving
+# the theme.font key unset here so Streamlit doesn't fight us with a body-level
+# fallback to Source Code Pro.
 
 [browser]
 gatherUsageStats = false

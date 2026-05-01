@@ -62,6 +62,14 @@ PROVIDER_MODELS = {
     "openai": ["gpt-4o-mini", "gpt-4o"],
 }
 
+MODEL_DISPLAY_NAMES = {
+    "moonshot-v1-128k": "Kimi K2.6 (128K context)",
+    "moonshot-v1-32k": "Kimi K2.6 (32K context)",
+    "moonshot-v1-8k": "Kimi K2.6 (8K context)",
+    "gpt-4o-mini": "GPT-4o mini",
+    "gpt-4o": "GPT-4o",
+}
+
 
 # ---------------------------------------------------------------------------
 # session-state init
@@ -86,6 +94,8 @@ def _init_state() -> None:
         "iter_idx": 0,
         "max_iters": 5,
         "redirect_open": False,
+        "pending_iteration": False,
+        "progress_substep": "",
         "last_error": None,
         "metrics_cache": _zero_metrics(),
         "cost_tracker": None,
@@ -330,6 +340,18 @@ def _render_config_form() -> None:
         key="cfg_data_path",
     )
 
+    # Row/col preview (fix #8) — show counts so the user knows the dataset was parsed.
+    _preview_df = s.uploaded_df
+    if _preview_df is None and data_path and Path(data_path).exists():
+        try:
+            _preview_df = pd.read_csv(data_path, nrows=200_000)
+        except Exception:
+            _preview_df = None
+    if _preview_df is not None:
+        st.caption(
+            f"📊 dataset: {len(_preview_df):,} rows × {len(_preview_df.columns)} columns"
+        )
+
     # Mode-dependent inputs.
     target = None
     task_type = "auto"
@@ -381,15 +403,20 @@ def _render_config_form() -> None:
         key="cfg_api_key",
     )
     st.caption("Key is held in this Streamlit session only — never written to disk or logged.")
+    # Fix #7 (round 2): make the selectbox key provider-specific. Streamlit's
+    # selectbox with a stable key + format_func leaves the closed-dropdown
+    # label stuck on the old value when the underlying options change. Using
+    # a per-provider key forces a fresh widget render with the right default.
     model = st.selectbox(
         "Model",
         PROVIDER_MODELS[provider],
-        key="cfg_model",
+        key=f"cfg_model_{provider}",
+        format_func=lambda m: MODEL_DISPLAY_NAMES.get(m, m),
     )
 
     max_iters = st.slider("Max iterations", 1, 10, 5, key="cfg_max_iters")
     auto_run = st.checkbox("Auto-run (no HITL pause)", value=True, key="cfg_auto_run")
-    seed = int(st.number_input("Seed", value=42, key="cfg_seed"))
+    seed = 42  # pinned internally for reproducibility; not user-configurable in UI
 
     automl_budget = 120
     if mode == "predict":
@@ -400,7 +427,23 @@ def _render_config_form() -> None:
             key="cfg_automl_budget",
         )
 
-    if st.button("▶ START RUN", use_container_width=True, type="primary"):
+    # Fix #5: gate START — explore mode requires a non-empty question; predict
+    # requires a target column.
+    blocking_reason = None
+    if mode == "explore" and not (question or "").strip():
+        blocking_reason = "Enter a research question to start an Explore run."
+    elif mode == "predict" and not (target or "").strip():
+        blocking_reason = "Pick a target column to start a Predict run."
+
+    if blocking_reason:
+        st.caption(f"⚠️ {blocking_reason}")
+
+    if st.button(
+        "▶ START RUN",
+        use_container_width=True,
+        type="primary",
+        disabled=blocking_reason is not None,
+    ):
         _start_run(
             mode=mode,
             data_path=data_path,
@@ -420,17 +463,90 @@ def _render_config_form() -> None:
 # ---------------------------------------------------------------------------
 # main column — timeline + per-iteration metrics + action bar
 # ---------------------------------------------------------------------------
+def _render_progress_bar() -> None:
+    """Main-area progress bar (fix #1, #2, #4 + user request).
+
+    Replaces the cramped sidebar `st.status` blocks. Shows iter N/M, a phase
+    sub-label, and a real progress meter. Visible only when a run is in flight
+    or completed.
+    """
+    s = st.session_state
+    if s.trace is None:
+        return
+    if s.phase not in ("running", "paused", "complete"):
+        return
+
+    completed = s.trace.iteration_count()
+    total = max(1, int(s.max_iters or 1))
+
+    if s.phase == "complete":
+        label = f"Complete · {completed} / {total} iterations"
+        sub = "All iterations done. Reports written to disk."
+        pct = 1.0
+    elif s.phase == "running":
+        # Show the iteration that's currently in flight (1-indexed for humans).
+        in_flight = min(completed + 1, total)
+        label = f"Running iteration {in_flight} / {total}"
+        sub = s.get("progress_substep", "→ hypothesizing → generating code → running sandbox → evaluating")
+        pct = (completed) / total
+    else:  # paused
+        label = f"Paused after iteration {completed} / {total}"
+        sub = "Review the latest card and click CONTINUE / STOP / REDIRECT below."
+        pct = completed / total
+
+    # Predict mode: after the last iteration, AutoGluon trains. Surface that
+    # transition explicitly when we've left the loop and ensemble training is
+    # underway.
+    if (
+        s.phase == "running"
+        and s.trace.mode == "predict"
+        and completed >= total
+    ):
+        label = "Training AutoGluon ensemble"
+        sub = f"→ time budget: {s.get('_automl_budget', 120)}s"
+        pct = 0.99
+
+    st.markdown(f'<div class="hl-progress-block">', unsafe_allow_html=True)
+    st.markdown(f'<div class="hl-progress-label">{label}</div>', unsafe_allow_html=True)
+    st.progress(min(1.0, max(0.0, pct)))
+    st.markdown(f'<div class="hl-progress-sub">{sub}</div>', unsafe_allow_html=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
 def _render_main() -> None:
     s = st.session_state
     if s.trace is None:
         st.markdown('<div class="hl-empty">awaiting run config</div>', unsafe_allow_html=True)
         return
+
+    # Progress bar at the top of the timeline (fixes mid-run UX).
+    _render_progress_bar()
+
+    # Question-level bias banner (fix #6 round 2): if the user's question
+    # itself frames causation about a sensitive variable, surface that as a
+    # persistent top-of-run banner. This catches the demo case where Kimi
+    # self-disciplines and the per-iteration bias scanner doesn't fire.
+    qflags = s.get("question_bias_flags") or []
+    if qflags:
+        n = len(qflags)
+        bullets = "<br>".join(
+            f"&nbsp;&nbsp;• <b>{f['sensitive_var']}</b> + causal verb <code>{f['causal_verb']}</code>: \"{f['snippet'][:200]}\""
+            for f in qflags
+        )
+        st.markdown(
+            f'<div class="hl-bias-chip">⚠ Your question implied causation about a sensitive '
+            f'variable ({n} match{"es" if n != 1 else ""}). The agent will produce '
+            f'<b>correlational</b> findings only — never causal. Treat all results accordingly.<br>'
+            f'{bullets}</div>',
+            unsafe_allow_html=True,
+        )
+
     if s.last_error:
         st.error(s.last_error)
 
     nodes = s.trace.iter_nodes()
     if not nodes:
-        st.markdown('<div class="hl-empty">no iterations yet</div>', unsafe_allow_html=True)
+        st.markdown('<div class="hl-empty">no iterations yet — first one is in flight</div>', unsafe_allow_html=True)
     else:
         for node in nodes:
             _render_iteration_card(node)
@@ -478,6 +594,17 @@ def _render_iteration_card(node) -> None:
 
     card_classes = "hl-iter-card" + (f" {card_class}" if card_class else "")
     badge_classes = "hl-iter-badge" + (f" {badge_class}" if badge_class else "")
+    # Fix #6: bias chip surfaced directly on the card so the demo audience sees
+    # the safety system fire without having to download the report.
+    bias_html = ""
+    if fb and fb.bias_flags:
+        n = len(fb.bias_flags)
+        flag_word = "flag" if n == 1 else "flags"
+        bias_html = (
+            f'<div class="hl-bias-chip">⚠ {n} bias {flag_word} raised — '
+            f"causal claim about a sensitive variable. Interpret as correlational only; "
+            f"see EVALUATOR tab for details.</div>"
+        )
     st.markdown(
         f"""
         <div class="{card_classes}">
@@ -487,6 +614,7 @@ def _render_iteration_card(node) -> None:
             <span class="{badge_classes}">{badge_glyph} {decision_label} {confidence}</span>
           </div>
           <div class="hl-iter-statement">{node.hypothesis.statement}</div>
+          {bias_html}
         </div>
         """,
         unsafe_allow_html=True,
@@ -535,7 +663,15 @@ def _render_iteration_card(node) -> None:
             st.markdown(f"**Reason:** {fb.reason}")
             st.markdown(f"**Observations:** {fb.observations}")
             if fb.bias_flags:
-                st.warning(f"⚠ {len(fb.bias_flags)} bias flag(s) raised")
+                st.warning(f"⚠ {len(fb.bias_flags)} bias flag(s) raised:")
+                for flag in fb.bias_flags:
+                    sv = flag.get("sensitive_var", "?")
+                    cv = flag.get("causal_verb", "?")
+                    src = flag.get("source", "?")
+                    snip = (flag.get("snippet", "") or "")[:240]
+                    st.markdown(
+                        f"- **{sv}** + causal verb \"`{cv}`\" in *{src}*: \"{snip}\""
+                    )
             if fb.novel_subhypotheses:
                 st.markdown("**Suggested follow-ups:**")
                 for sh in fb.novel_subhypotheses:
@@ -758,32 +894,55 @@ def _start_run(
     s["_model"] = model
     s["_api_key"] = api_key
 
-    _run_one_iteration()
-    if s.phase == "paused" and s.get("_auto_run"):
-        # Auto mode — keep firing iterations until done.
-        _drive_auto()
+    # Fix #6 (round 2): scan the *question itself* for causal framing on a
+    # sensitive variable. The bias scanner that runs per-iteration only flags
+    # the LLM's output, but Kimi self-disciplines on causal language so its
+    # generated hypothesis usually reads as correlational even when the user
+    # explicitly asked "find the true cause of X". Surfacing the *question's*
+    # framing as a top-of-timeline banner keeps the safety story visible in
+    # the demo regardless of what the LLM does downstream.
+    s.question_bias_flags = []
+    if (trace.question or "").strip():
+        try:
+            from hypothesisloop.safety.bias_scanner import scan_text
+            flags = scan_text(trace.question, source="user_question")
+            s.question_bias_flags = [
+                {
+                    "sensitive_var": f.sensitive_var,
+                    "causal_verb": f.causal_verb,
+                    "snippet": f.snippet,
+                    "source": f.source,
+                }
+                for f in flags
+            ]
+        except Exception:
+            pass
+
+    # Fix #1, #2, #3, #4: the run is driven from the bottom of the script via
+    # `s.pending_iteration`, which gives the topbar/progress-bar a chance to
+    # paint between iterations and ensures status indicators land in the main
+    # area (not the cramped sidebar).
+    s.pending_iteration = True
     st.rerun()
 
 
 def _run_one_iteration() -> None:
     s = st.session_state
     s.phase = "running"
+    s.progress_substep = "→ hypothesizing → generating code → running sandbox → evaluating"
     try:
-        with st.status(f"iter {s.iter_idx + 1} in progress", expanded=True) as status:
-            status.write("→ hypothesizing → generating code → running sandbox → evaluating")
-            _execute_iteration(
-                s.iter_idx,
-                trace=s.trace,
-                scheduler=s.components["scheduler"],
-                hypothesize_fn=s.components["hypothesize_fn"],
-                experiment_fn=s.components["experiment_fn"],
-                evaluate_fn=s.components["evaluate_fn"],
-                learn_fn=None,
-                novelty_fn=s.components["novelty_fn"],
-                hitl_fn=None,
-                safety_fn=s.components["safety_fn"],
-            )
-            status.update(label=f"iter {s.iter_idx + 1} complete", state="complete")
+        _execute_iteration(
+            s.iter_idx,
+            trace=s.trace,
+            scheduler=s.components["scheduler"],
+            hypothesize_fn=s.components["hypothesize_fn"],
+            experiment_fn=s.components["experiment_fn"],
+            evaluate_fn=s.components["evaluate_fn"],
+            learn_fn=None,
+            novelty_fn=s.components["novelty_fn"],
+            hitl_fn=None,
+            safety_fn=s.components["safety_fn"],
+        )
     except Exception as e:
         s.last_error = f"iteration {s.iter_idx + 1} failed: {type(e).__name__}: {e}"
 
@@ -797,34 +956,33 @@ def _run_one_iteration() -> None:
 
     if s.iter_idx >= s.max_iters or s.last_error:
         _complete()
+        s.pending_iteration = False
     else:
         s.phase = "paused"
 
 
-def _drive_auto() -> None:
-    """Auto-mode: keep stepping until budget is hit or an error stops us."""
-    s = st.session_state
-    while s.phase == "paused" and s.iter_idx < s.max_iters:
-        _run_one_iteration()
-
-
 def _continue() -> None:
-    _run_one_iteration()
+    s = st.session_state
+    s.pending_iteration = True
+    s.phase = "running"
     st.rerun()
 
 
 def _continue_plus_5() -> None:
     s = st.session_state
-    s.max_iters += 5
-    s.phase = "paused"
-    if s.get("_auto_run"):
-        _drive_auto()
-    else:
-        _run_one_iteration()
+    # Fix #9: sync iter_idx to actual completed count, not the previous budget.
+    if s.trace is not None:
+        s.iter_idx = s.trace.iteration_count()
+    s.max_iters = s.iter_idx + 5
+    s.phase = "running"
+    s.pending_iteration = True
+    s.automl_summary = None  # let AutoGluon retrain on the extended feature set
     st.rerun()
 
 
 def _stop() -> None:
+    s = st.session_state
+    s.pending_iteration = False
     _complete()
     st.rerun()
 
@@ -834,9 +992,8 @@ def _redirect(text: str) -> None:
     if text and s.components is not None:
         s.components["scheduler"].inject(text)
     s.redirect_open = False
-    _run_one_iteration()
-    if s.phase == "paused" and s.get("_auto_run"):
-        _drive_auto()
+    s.phase = "running"
+    s.pending_iteration = True
     st.rerun()
 
 
@@ -871,6 +1028,7 @@ def _complete() -> None:
                     target_column=s.trace.target_column,
                     task_type=s.trace.task_type,
                     output_dir=s.session_root,
+                    engineered_features=s.trace.engineered_features,
                     time_budget_s=s.get("_automl_budget", 120),
                     seed=42,
                 )
@@ -904,3 +1062,35 @@ def _complete() -> None:
 _render_topbar()
 _render_sidebar()
 _render_main()
+
+# ---------------------------------------------------------------------------
+# auto-iteration driver — fixes #1, #2, #4 (status pulse / streaming cards /
+# main-area progress instead of cramped sidebar st.status). One iteration per
+# render pass; the topbar, progress bar, and any new card paint BEFORE the
+# next iteration runs.
+# ---------------------------------------------------------------------------
+def _drive_pending() -> None:
+    s = st.session_state
+    if not s.get("pending_iteration"):
+        return
+    if s.get("phase") != "running":
+        return
+    if s.get("trace") is None or s.get("components") is None:
+        return
+    if s.get("last_error"):
+        return
+
+    _run_one_iteration()
+
+    if s.get("phase") == "complete":
+        s.pending_iteration = False
+    elif s.get("_auto_run"):
+        s.pending_iteration = True
+        s.phase = "running"
+    else:
+        s.pending_iteration = False  # HITL mode → wait for user click
+
+    st.rerun()
+
+
+_drive_pending()

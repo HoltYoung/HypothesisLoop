@@ -47,6 +47,18 @@ outputs/
 tool_outputs/
 tool_figures/
 *.session.json
+
+# Validation suite fixtures (regenerable from data/adult.csv)
+data/adult_corrupted.csv
+
+# Validation suite checkpoints + raw run logs
+tests/validation_checkpoints.jsonl
+tests/validation_run.log
+
+# Stray run outputs at repo root (use reports/<session-id>/ instead)
+/TESTING/
+/report.md
+/report.txt
 # --------------------------------------------------
 # Logs
 # --------------------------------------------------
